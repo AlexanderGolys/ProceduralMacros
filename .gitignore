@@ -1,0 +1,5 @@
+/target
+*.m2~
+*.m2.bak
+/.Macaulay2
+~/.Macaulay2
