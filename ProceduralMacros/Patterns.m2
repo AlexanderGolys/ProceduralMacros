@@ -89,12 +89,36 @@ instantiate = (tmpl, b) -> (
     )
     else TokenTree(leftOf tmpl, apply(contentOf tmpl, c -> instantiate(c, b)), rightOf tmpl, delimiterOf tmpl))
 
--- quote: instantiate a template written as source against a name -> subtree
--- binding. The output half of declarative macros, exposed so a procedural
--- `ts -> ...` body can build trees without string surgery.
-quote = method()
-quote(String, HashTable) := TokenTree => (templateSrc, binding) ->
-    instantiate(parseTemplate templateSrc, binding)
+-- quote: instantiate a template written as source against name -> subtree
+-- bindings. The output half of declarative macros, exposed so a procedural
+-- `ts -> ...` body can build trees without string surgery. Bindings are given
+-- inline as `"name" => node` options -- quote("print($e)", "e" => focus ts) --
+-- which is lighter than wrapping them in a hashTable; a single HashTable is still
+-- accepted (for programmatically-built bindings), and a template with no holes
+-- needs no bindings at all.
+quote = method(Dispatch => Thing)
+quote String := TokenTree => src -> instantiate(parseTemplate src, new HashTable)
+quote Sequence := TokenTree => s -> (
+    rest := drop(s, 1);
+    binding := if #rest == 1 and instance(first rest, HashTable) then first rest
+               else hashTable apply(rest, o -> (toString o#0, o#1));
+    instantiate(parseTemplate first s, binding))
+
+-- search the whole subtree, not just the root: every (matched node, bindings) pair
+-- in pre-order. A node and its descendants are all tested, so matches may nest. The
+-- node is returned alongside its bindings so a caller can replace it in place or
+-- instantiate a template against the bindings.
+matchesIn = method()
+matchesIn(TokenTree, TokenTree) := List => (pat, tree) -> (
+    below := flatten apply(contentOf tree, c -> matchesIn(pat, c));
+    here := matchPattern(pat, tree);
+    if here =!= null then prepend((tree, here), below) else below)
+-- a source pattern parses as a one-cell top-level ";" sequence; we search against
+-- bare subtrees, so match the cell itself, not its sequence wrapper
+patternCell = src -> (
+    p := parseTemplate src;
+    if delimiterOf p === ";" and #contentOf p == 1 then (contentOf p)#0 else p)
+matchesIn(String, TokenTree) := List => (patSrc, tree) -> matchesIn(patternCell patSrc, tree)
 
 -- expand the first (pattern, template) rule whose pattern matches the input
 expandRules = (name, rules, inp) -> (

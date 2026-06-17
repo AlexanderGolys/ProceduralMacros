@@ -14,7 +14,7 @@ newPackage(
 
 export {
     "installMacro", "expandSource", "runSource",
-    "Macro", "nameOf", "transformOf", "macroNamed", "expandMacro", "declMacro", "quote", "Metavar",
+    "Macro", "nameOf", "transformOf", "macroNamed", "expandMacro", "declMacro", "quote", "Metavar", "matchesIn",
     "TokenTree", "tokenTree",
     "leaf", "infix", "prefix", "postfix", "delimited", "bracketed",
     "spaceOperator", "whitespaceDelimiter", "Comment",
@@ -344,6 +344,24 @@ TEST ///
   assert ( ls#0 == "punctuation \"+\"" )           -- the node is labelled by its token's class
   assert ( ls#1 == "├─ symbol \"a\"" )
   assert ( ls#2 == "└─ symbol \"b\"" )
+///
+
+TEST ///
+  -- quote takes bindings inline as options (no hashTable wrapper); a HashTable
+  -- still works, and a hole-free template needs none
+  assert ( toString quote("f($a, $b)", "a" => leaf "1", "b" => leaf "2") == "f ( 1 , 2 )" )
+  assert ( toString quote("g($x)", hashTable{"x" => leaf "9"}) == "g ( 9 )" )
+  assert ( toString quote("1 + 2") == "1 + 2" )
+///
+
+TEST ///
+  -- matchesIn searches the whole tree, returning every (node, bindings) pair
+  tree = tokenTree cstParse "f(1) + g(2) + f(3)";
+  ms = matchesIn("f($x)", tree);
+  assert ( #ms == 2 )                                          -- f(1) and f(3)
+  assert ( apply(ms, m -> toString m#1#"x") == {"1", "3"} )    -- their captured args
+  assert ( #matchesIn("$a + $b", tree) == 2 )                  -- matches nest (both + nodes)
+  assert ( #matchesIn("zzz($x)", tree) == 0 )                  -- no match -> empty list
 ///
 
 TEST ///
