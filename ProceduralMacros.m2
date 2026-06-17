@@ -14,7 +14,7 @@ newPackage(
 
 export {
     "installMacro", "expandSource", "runSource",
-    "Macro", "nameOf", "transformOf", "macroNamed", "expandMacro", "declMacro", "quote", "Metavar", "matchesIn",
+    "Macro", "nameOf", "transformOf", "macroNamed", "expandMacro", "declMacro", "quote", "Metavar", "Repetition", "matchesIn",
     "TokenTree", "tokenTree",
     "leaf", "infix", "prefix", "postfix", "delimited", "bracketed",
     "spaceOperator", "whitespaceDelimiter", "Comment",
@@ -352,6 +352,29 @@ TEST ///
   assert ( toString quote("f($a, $b)", "a" => leaf "1", "b" => leaf "2") == "f ( 1 , 2 )" )
   assert ( toString quote("g($x)", hashTable{"x" => leaf "9"}) == "g ( 9 )" )
   assert ( toString quote("1 + 2") == "1 + 2" )
+///
+
+TEST ///
+  -- repetition ${ unit }+ / ${ unit }* over "," and ";" sequences; unit metavars
+  -- bind to lists, one entry per repetition
+  declMacro("collect", "f(${$x,}+)", "g(${$x,}+)");
+  assert ( expandSource "$collect f(a, b, c) $" == "g ( a , b , c )" )
+  assert ( expandSource "$collect f(a) $" == "g ( a )" )          -- + matches a run of one
+  -- a multi-element unit repeats in chunks; here each (a,b) pair is swapped
+  declMacro("swap2", "[${$a, $b,}+]", "[${$b, $a,}+]");
+  assert ( expandSource "$swap2 [1, 2, 3, 4] $" == "[ 2 , 1 , 4 , 3 ]" )
+  -- the unit may drop part of each repetition (keys of key => value pairs)
+  declMacro("keysOf", "{${$k => $v,}+}", "L(${$k,}+)");
+  assert ( expandSource "$keysOf {a => 1, b => 2, c => 3} $" == "L ( a , b , c )" )
+  -- fixed elements may sit beside the repetition
+  declMacro("firstArg", "f($h, ${$t,}+)", "only($h)");
+  assert ( expandSource "$firstArg f(a, b, c) $" == "only ( a )" )
+  -- * matches zero, + does not
+  declMacro("star", "g(${$x,}*)", "h(${$x,}*)");
+  assert ( expandSource "$star g() $" == "h ( )" )
+  -- repetition feeds matchesIn too: the run is captured as a list
+  ms = matchesIn("f(${$x,}+)", tokenTree cstParse "f(1, 2, 3)");
+  assert ( #ms == 1 and apply(ms#0#1#"x", toString) == {"1", "2", "3"} )
 ///
 
 TEST ///
