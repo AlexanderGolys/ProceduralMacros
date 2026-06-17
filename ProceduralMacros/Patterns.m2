@@ -37,8 +37,10 @@ markMetavars = t -> (
 
 -- parse a pattern/template source into a tree with metavar nodes. The parse is
 -- pure and the result is treated read-only by matchPattern/instantiate, so it is
--- cached -- a quote-based macro body no longer re-parses its template each call.
-templateCache = new MutableHashTable
+-- cached -- a quote-based macro body no longer re-parses its template each call. A
+-- CacheTable (not a plain MutableHashTable) is the M2 idiom for memoised computed
+-- values: it names the role, and its contents stay invisible to === comparison.
+templateCache = new CacheTable
 parseTemplate = src -> (
     if not templateCache#?src
     then templateCache#src = markMetavars tokenTree cstParse toPlaceholders src;
