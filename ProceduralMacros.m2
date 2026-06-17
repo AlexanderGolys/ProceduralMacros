@@ -14,7 +14,7 @@ newPackage(
 
 export {
     "installMacro", "expandSource", "runSource",
-    "Macro", "nameOf", "transformOf", "macroNamed", "expandMacro",
+    "Macro", "nameOf", "transformOf", "macroNamed", "expandMacro", "declMacro",
     "TokenTree", "tokenTree",
     "leaf", "infix", "prefix", "postfix", "delimited", "bracketed",
     "spaceOperator", "whitespaceDelimiter",
@@ -167,6 +167,9 @@ value String := s -> valuePrimitive(if match(macroSigil, s) then expandSource s 
 -- `value "..."` expands them in a string.
 value File := f -> value get f
 
+-- Declarative (pattern => template) macros build on the macro layer above.
+load "./ProceduralMacros/Patterns.m2"
+
 --------------------------------------------------------------------
 -- Built-in demo macros
 --------------------------------------------------------------------
@@ -200,6 +203,16 @@ beginDocumentation()
 
 TEST ///
   assert ( cstToSource cstParse "f(a, b) + 3" == "f ( a , b ) + 3" )
+///
+
+TEST ///
+  -- a declarative macro: pattern => template, with $-metavariables
+  declMacro("commute", "$a + $b", "$b + $a");
+  assert ( expandSource "$commute 2 + x*y $" == "x * y + 2" )       -- binds, swaps, splices
+  declMacro("dup", "$x", "($x, $x)");
+  assert ( expandSource "$dup f a $" == "( f a , f a )" )           -- one metavar, used twice
+  -- a non-matching input is rejected
+  assert ( (try expandSource "$commute 2 * 3 $" else "rejected") == "rejected" )
 ///
 
 TEST ///
