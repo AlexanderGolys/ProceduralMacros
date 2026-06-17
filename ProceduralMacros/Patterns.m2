@@ -122,7 +122,7 @@ repCallNames = new HashTable from {"+" => "RepPlus", "*" => "RepStar", "|" => "A
 isIdentChar = c -> match("[A-Za-z0-9']", c)
 scanReps = src -> (
     n := #src;
-    at := i -> if i < n then substring(i, 1, src) else "";
+    at := i -> if i >= 0 and i < n then substring(i, 1, src) else "";   -- "" off either end (negative would wrap)
     stack := {};                                  -- {bracePos, isBraceFormOpen}
     spans := {};                                  -- {sigilPos, closeBracePos, form}
     i := 0;
@@ -239,6 +239,11 @@ treeEquals = (a, b) -> (
 matchRepetition = (rep, ielems, b) -> (
     unit := repUnit rep; u := #unit;
     if u == 0 then error "empty '{ } repetition unit";
+    -- a unit metavar accumulates a LIST across chunks; if the same name is already
+    -- bound to a single subtree (reused from outside the repetition) the accumulation
+    -- is ill-defined, so reject it up front rather than crashing on the list append
+    scan(metavarNamesIn rep, nm -> if b#?nm and not instance(b#nm, List) then
+        error("metavariable '" | nm | " is bound both outside and inside a repetition"));
     if #ielems % u != 0 then return false;
     nChunks := #ielems // u;
     if repQuantifier rep === "+" and nChunks == 0 then return false;
@@ -315,8 +320,9 @@ matchPattern = (pat, inp) -> (
     b := new MutableHashTable;
     if matchInto(pat, inp, b) then new HashTable from b else null)
 
--- a deep copy of a tree, so a spliced subtree never aliases the input or a sibling
-cloneTree = t -> TokenTree(leftOf t, apply(contentOf t, cloneTree), rightOf t, delimiterOf t)
+-- a deep copy of a tree, so a spliced subtree never aliases the input or a sibling.
+-- `class t` keeps the node's exact (sub)type -- a cloned Comment / Metavar stays one
+cloneTree = t -> (class t)(leftOf t, apply(contentOf t, cloneTree), rightOf t, delimiterOf t)
 
 -- expand a repetition template into its run of elements: the unit's list-valued
 -- metavariables drive the repetition count (which must agree), and each rep
@@ -342,7 +348,7 @@ instantiate = (tmpl, b) -> (
     if isMetavar tmpl then (
         name := metavarName tmpl;
         if not b#?name
-            then error("template metavariable $" | name | " is unbound");
+            then error("template metavariable '" | name | " is unbound");
         cloneTree b#name
     )
     else if any(contentOf tmpl, isRepetition) then (
@@ -350,8 +356,14 @@ instantiate = (tmpl, b) -> (
             TokenTree(leftOf tmpl,
                 flatten apply(contentOf tmpl, c -> if isRepetition c then expandRepetition(c, b) else {instantiate(c, b)}),
                 rightOf tmpl, delimiterOf tmpl)
+        -- a repetition only expands into a run, which needs a delimiter to splice into:
+        -- a "," / ";" sequence (handled above) or a bracket whose SOLE content it is.
+        -- Anywhere else (e.g. `1 + '{ 'x }+`) the run has no home -- fail fast rather
+        -- than silently dropping the repetition's siblings.
         else (
-            rep := first select(contentOf tmpl, isRepetition);
+            if #contentOf tmpl != 1 then
+                error "a repetition '{ }+ in a template must be the only content of a sequence or bracket";
+            rep := first contentOf tmpl;
             inner := delimited(repSeparator rep, expandRepetition(rep, b));
             TokenTree(leftOf tmpl, {inner}, rightOf tmpl, delimiterOf tmpl))
     )

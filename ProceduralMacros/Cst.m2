@@ -469,6 +469,7 @@ net TokenStream := Net => ts -> ("TokenStream @ depth " | toString(#chainOf ts -
 -- make target become a copy of src while keeping target's object identity; the
 -- Items list is cloned so the two nodes do not share one mutable content list
 overwrite = (target, src) -> (
+    if target === src then return target;           -- nothing to do, and clearing first would empty it
     scan(keys target, k -> remove(target, k));
     scan(keys src, k -> target#k = if k === Items then new MutableList from src#k else src#k);
     target
@@ -480,7 +481,12 @@ setContent = (node, items) -> (node#Items = new MutableList from items; node)
 -- the focused node's parent, and the focused node's position within it -- located
 -- by identity, so it is correct no matter how the siblings have since shifted
 parentOf = ts -> (chainOf ts)#(#chainOf ts - 2)
-indexInParent = ts -> position(contentOf parentOf ts, c -> c === focus ts)
+-- position returns null when the focus is no longer among its parent's children -- a
+-- stale cursor, left dangling by an edit that detached or replaced the focused node
+indexInParent = ts -> (
+    i := position(contentOf parentOf ts, c -> c === focus ts);
+    if i === null then error "stale cursor: the focused node is no longer in its parent";
+    i)
 
 -- replace the focused subtree (the returned cursor points at the replacement)
 replaceFocus = method()

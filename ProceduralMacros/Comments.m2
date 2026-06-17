@@ -93,7 +93,6 @@ attachComments(TokenTree, String) := TokenTree => (root, src) -> (
         if p >= n then error "attachComments: source ended before the token spine did";
         if at p === "\"" then st#"pos" = endOfString p
         else if starts(p, "///") then st#"pos" = endOfRaw p
-        else if tok === ";" then (if starts(p, ";") then st#"pos" = p + 1)
         else if starts(p, tok) then st#"pos" = p + #tok
         else (
             alt := synonymEnd(p, tok);

@@ -91,12 +91,19 @@ expandMacro(Macro, String) := String => (m, block) ->
 isSpaceChar = c -> match(///\s///, c)
 isNameChar = c -> match("[A-Za-z0-9]", c)
 
--- the index just past the lexical construct that starts at i: a string literal
--- (honouring \" escapes), a -- line comment, or a -* *- block comment
+-- the index just past the lexical construct that starts at i: a "…" string literal
+-- (honouring \" escapes), a ///…/// raw string, a -- line comment, or a -* *- block
+-- comment. A `$` inside any of these is literal text, never a macro sigil, so the
+-- scanner skips over the whole construct.
 pastString = (src, i) -> (
     n := #src; j := i + 1;
     while j < n and src#j != "\"" do j = if src#j == "\\" then j + 2 else j + 1;
     if j < n then j + 1 else n
+)
+pastRawString = (src, i) -> (
+    n := #src; j := i + 3;
+    while j + 2 < n and substring(j, 3, src) != "///" do j = j + 1;
+    if j + 2 < n then j + 3 else n
 )
 pastLineComment = (src, i) -> (
     n := #src; j := i + 2;
@@ -112,6 +119,7 @@ pastBlockComment = (src, i) -> (
 -- the index just past whichever lexical construct starts at k, else k+1
 pastConstruct = (src, k) -> (
     if src#k == "\"" then pastString(src, k)
+    else if k + 2 < #src and substring(k, 3, src) == "///" then pastRawString(src, k)
     else if k + 1 < #src and substring(k, 2, src) == "--" then pastLineComment(src, k)
     else if k + 1 < #src and substring(k, 2, src) == "-*" then pastBlockComment(src, k)
     else k + 1
@@ -196,7 +204,7 @@ installMacro("show", ts -> (
 
 installMacro("sig", ts -> (
     bin := focus (ts_0);
-    if not (delimiterOf bin =!= null and length bin == 2 and delimiterOf bin =!= spaceOperator) then
+    if nodeKind bin =!= "Infix" then
         error "sig: expected a binary expression `a op b`";
     lhs := toString bin_0;
     op := delimiterOf bin;
@@ -256,6 +264,24 @@ TEST ///
 
 TEST ///
   assert ( expandSource "$show 1 + 2 $" == "print ( \"1 + 2 = \" | toString ( 1 + 2 ) )" )
+///
+
+TEST ///
+  -- the source scanner skips string and comment constructs, so a `$` inside them is
+  -- literal text, never a macro sigil -- including inside a triple-slash raw string
+  installMacro("double", ts -> quote("2 * ('e)", "e" => focus ts));
+  assert ( expandSource "$double 3 $" == "2 * ( 3 )" )                       -- a real invocation
+  raw = "x = " | concatenate(3:"/") | " $double 3 $ " | concatenate(3:"/");  -- a triple-slash raw string
+  assert ( expandSource raw == raw )                                         -- inert in a raw string
+  assert ( expandSource "y = \"$double 3 $\"" == "y = \"$double 3 $\"" )     -- inert in a "string"
+  assert ( expandSource "-- $double 3 $" == "-- $double 3 $" )               -- inert in a comment
+///
+
+TEST ///
+  -- a template repetition expands into a run, which needs a sequence or bracket to
+  -- live in; a repetition stranded beside other siblings is rejected, not silently dropped
+  declMacro("strand", "f('{'x,}+)", "1 + '{'x,}+");
+  assert ( (try expandSource "$strand f(a, b) $" else "rejected") == "rejected" )
 ///
 
 TEST ///
