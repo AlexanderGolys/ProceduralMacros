@@ -80,14 +80,18 @@ sequenceDelimiters = set {",", ";"}
 
 TokenTree = new SelfInitializingType of MutableHashTable
 
--- the sole builder: every node carries all four fields (the SelfInit sugar
--- `TokenTree {key => value, ...}` builds them in one shot)
-mkNode = (open, items, close, delim) -> TokenTree {
+-- the four-field option list every node carries; a SelfInitializing TokenTree (or
+-- any subtype) applied to it builds the node in one shot. Factored out so the
+-- subtype constructors (Comment, and the macro-layer Metavar) reuse the one layout.
+nodeOptions = (open, items, close, delim) -> {
     Opening => open,
     Items => new MutableList from items,
     Separator => delim,
     Closing => close
 }
+
+-- the sole builder for a plain node
+mkNode = (open, items, close, delim) -> TokenTree nodeOptions(open, items, close, delim)
 
 --------------------------------------------------------------------
 -- Constructors -- strict-typed methods. Operands are real TokenTree nodes (build a
@@ -122,15 +126,16 @@ bracketed = method()
 bracketed(String, TokenTree, String) := TokenTree => (o, inner, c) -> mkNode(o, {inner}, c, null)
 bracketed(String, Nothing, String) := TokenTree => (o, inner, c) -> mkNode(o, {}, c, null)
 
--- a comment is its own node KIND, not a separator or a flavour of leaf: a subtype
--- of TokenTree, so instance(t, Comment) tells it apart from a string/identifier
--- leaf while every TokenTree accessor still dispatches to it by inheritance. Its
--- full text (including the -- or -* *- delimiters) is the Opening, so it flattens
--- verbatim; the other three fields stay at their childless-leaf defaults.
-Comment = new Type of TokenTree
+-- a comment is its own node KIND, not a separator or a flavour of leaf: a
+-- self-initializing subtype of TokenTree, so it is built with the same `Type opts`
+-- constructor sugar as a plain node, instance(t, Comment) tells it apart from a
+-- string/identifier leaf, and every TokenTree accessor still dispatches to it by
+-- inheritance. Its full text (including the -- or -* *- delimiters) is the Opening,
+-- so it flattens verbatim; the other three fields stay at their leaf defaults.
+Comment = new SelfInitializingType of TokenTree
 
 commentNode = method()
-commentNode String := Comment => text -> newClass(Comment, mkNode(text, {}, null, null))
+commentNode String := Comment => text -> Comment nodeOptions(text, {}, null, null)
 
 isComment = method()
 isComment TokenTree := Boolean => t -> instance(t, Comment)
@@ -232,12 +237,14 @@ tokenTree BasicList := TokenTree => node -> (
 
 addHook(symbol tokenTree, node -> if isTag(node, "Binary") then (
     op := leafText node#2;
-    if sequenceDelimiters#?op then delimited(op, flattenSpine(node, op))
+    if sequenceDelimiters#?op then
+        delimited(op, flattenSpine(node, op))
     else infix(tokenTree node#1, op, tokenTree node#3)
 ))
 -- juxtaposition is an infix whose operator is the synthetic spaceOperator
 addHook(symbol tokenTree, node -> if isTag(node, "Adjacent") then
     infix(tokenTree node#1, spaceOperator, tokenTree node#2))
+
 addHook(symbol tokenTree, node -> if isTag(node, "Unary") then (
     op := leafText node#1;
     if sequenceDelimiters#?op then delimited(op, flattenSpine(node, op))
@@ -246,15 +253,20 @@ addHook(symbol tokenTree, node -> if isTag(node, "Unary") then (
 ))
 addHook(symbol tokenTree, node -> if isTag(node, "Postfix") then
     postfix(tokenTree node#1, leafText node#2))
+
 addHook(symbol tokenTree, node -> if isTag(node, "Arrow") then
     infix(tokenTree node#1, "->", tokenTree node#2))
+
 addHook(symbol tokenTree, node -> if isTag(node, "Parentheses") then (
     c := kids node; bracketed(leafText first c, tokenTree c#1, leafText last c)))
+
 addHook(symbol tokenTree, node -> if isTag(node, "EmptyParentheses") then (
     c := kids node; bracketed(leafText first c, null, leafText last c)))
+
 -- quote keywords (symbol/global/local/threadLocal), table-driven
 addHook(symbol tokenTree, node -> if isNode node and quoteKeyword#?(node#0) then
     prefix(quoteKeyword#(node#0), tokenTree node#1))
+
 -- control forms (if/while/for/try/new), table-driven
 addHook(symbol tokenTree, node -> if isNode node and keywordLayout#?(node#0) then
     delimited(whitespaceDelimiter, buildClauses(kids node, keywordLayout#(node#0))))
@@ -448,8 +460,8 @@ replaceFocus(TokenStream, TokenTree) := TokenStream => (ts, n) -> (
 -- detach the focused subtree from its parent; the cursor moves up to the parent
 removeFocus = method()
 removeFocus TokenStream := TokenStream => ts -> (
-    if atTop ts
-        then error "removeFocus: the root has no parent to detach it from";
+    if atTop ts then 
+        error "removeFocus: the root has no parent to detach it from";
     p := parentOf ts;
     i := indexInParent ts;
     setContent(p, drop(contentOf p, {i, i}));

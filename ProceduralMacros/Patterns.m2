@@ -15,12 +15,17 @@
 -- trees are never marked, so only the reserved placeholder prefix is unavailable
 -- inside a pattern or template.
 
--- a metavar node: the protected Symbol sits in the Separator slot, the name is the
--- text of its single leaf
-protect symbol metavariable
-metavarNode = name -> mkNode(null, {leaf name}, null, metavariable)
-isMetavar = t -> delimiterOf t === metavariable
-metavarName = t -> leftOf (contentOf t)#0
+-- a metavar is its own node KIND, like Comment: a self-initializing subtype of
+-- TokenTree built with the same `Type opts` constructor sugar, so instance(t,
+-- Metavar) tells a hole apart from a real leaf and every accessor still dispatches
+-- by inheritance. The metavariable name is its Opening; it has no children.
+Metavar = new SelfInitializingType of TokenTree
+
+metavarNode = method()
+metavarNode String := Metavar => name -> Metavar nodeOptions(name, {}, null, null)
+
+isMetavar = t -> instance(t, Metavar)
+metavarName = t -> leftOf t
 
 -- the placeholder lives only between the pre-scan and the node conversion; its
 -- prefix is reserved (a literal identifier starting with it is not supported)

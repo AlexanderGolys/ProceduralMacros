@@ -14,7 +14,7 @@ newPackage(
 
 export {
     "installMacro", "expandSource", "runSource",
-    "Macro", "nameOf", "transformOf", "macroNamed", "expandMacro", "declMacro", "quote",
+    "Macro", "nameOf", "transformOf", "macroNamed", "expandMacro", "declMacro", "quote", "Metavar",
     "TokenTree", "tokenTree",
     "leaf", "infix", "prefix", "postfix", "delimited", "bracketed",
     "spaceOperator", "whitespaceDelimiter", "Comment",
