@@ -22,10 +22,10 @@ releases: Releases
 
 ```bash
 # Run tests
-cd /home/flux/m2/ProceduralMacros && M2 --script -e 'check "ProceduralMacros"'
+M2 -e 'installPackage "ProceduralMacros"' -e 'check "ProceduralMacros"'
 
-# Install package
-cd /home/flux/m2/ProceduralMacros && M2 --script -e 'installPackage "ProceduralMacros"'
+# Just install
+M2 -e 'installPackage "ProceduralMacros"'
 ```
 
 ## Code conventions

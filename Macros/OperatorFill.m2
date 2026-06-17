@@ -6,17 +6,14 @@
 -- `T - T` via `T + (-T)`. Similarly, `T * T` implies `T / T` via
 -- `T * (T^-1)` for invertible types.
 --
--- Invocation:
---   @OperatorFill(MyType, "+" => "-", "+" => "Neg")
---     Generates subtraction from addition + negation.
---   @OperatorFill(MyType, "*" => "/", "*" => "Inv")
---     Generates division from multiplication + inverse.
+-- Invocation: $OperatorFill{{ ... M2 code ... }}$
+--
+-- The macro receives the CST of the body and returns a transformed
+-- CST containing the original definitions plus auto-generated ones.
 --------------------------------------------------------------------
 
-OperatorFill = method()
-OperatorFill(Type, List) := (T, specs) -> (
-    "TODO: CST-based operator fill macro"
-    )
+-- For now, identity — passes the CST through unchanged.
+OperatorFill = cst -> cst
 
--- Register the macro
 installMacro("OperatorFill", OperatorFill)
+
