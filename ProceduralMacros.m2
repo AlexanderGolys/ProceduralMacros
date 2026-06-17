@@ -14,7 +14,8 @@ newPackage(
 
 export {
     "installMacro", "expandSource", "runSource",
-    "Macro", "nameOf", "transformOf", "macroNamed", "expandMacro", "declMacro", "quote", "Metavar", "Repetition", "matchesIn", "nodeKind",
+    "Macro", "nameOf", "transformOf", "macroNamed", "expandMacro", "declMacro", "quote",
+    "Metavar", "Repetition", "Alternation", "matchesIn", "nodeKind",
     "TokenTree", "tokenTree",
     "leaf", "infix", "prefix", "postfix", "delimited", "bracketed",
     "spaceOperator", "whitespaceDelimiter", "Comment",
@@ -22,7 +23,8 @@ export {
     "isLeaf", "tokenClass",
     "leftOf", "rightOf", "delimiterOf", "contentOf",
     "setLeft", "setRight", "setDelimiter", "setItem", "appendItem",
-    "TokenStream", "tokenStream", "focus", "child", "up", "childCount", "atTop",
+    "TokenStream", "tokenStream", "focus", "child", "up", "root", "siblingOf",
+    "childIndex", "childCount", "atTop",
     "replaceFocus", "removeFocus", "appendContent", "prependContent", "insertContent",
     "cstParse", "cstToSource"
 }
@@ -283,6 +285,21 @@ TEST ///
 ///
 
 TEST ///
+  -- navigation: descend with _ , ascend with ^ , plus root / siblingOf / childIndex
+  ts = tokenStream tokenTree cstParse "f(a, b, c)";
+  seq = ((ts_0)_1)_0;                               -- the comma sequence a, b, c
+  b = seq_1;                                         -- the middle element
+  assert ( toString focus b == "b" and childIndex b == 1 )
+  assert ( toString focus siblingOf(b, 1) == "c" )   -- next sibling
+  assert ( toString focus siblingOf(b, -1) == "a" )  -- previous sibling
+  assert ( toString focus (b ^ 0) == "b" )           -- ^ 0 is the focus itself
+  assert ( toString focus (b ^ 1) == toString focus up b )   -- ^ 1 is the parent
+  assert ( toString focus (b ^ 2) == "( a , b , c )" )       -- two levels up: the bracket
+  assert ( toString focus root b == "f ( a , b , c )" )      -- all the way to the top
+  assert ( childIndex root b === null )              -- the root has no parent index
+///
+
+TEST ///
   -- tokenTree and flatten are inverses at the tree level: flatten then re-parse is stable
   inputs = {"f(a, b) + 3", "if x then y else z", "while c list e do g",
             "for i in L when p list e do z", "new T of B from C", "symbol x",
@@ -375,11 +392,24 @@ TEST ///
   -- repetition feeds matchesIn too: the run is captured as a list
   ms = matchesIn("f('{'x,}+)", tokenTree cstParse "f(1, 2, 3)");
   assert ( #ms == 1 and apply(ms#0#1#"x", toString) == {"1", "2", "3"} )
-  -- top-level statements separated by NEWLINES are the same ";" n-ary node as ";"
-  -- separated ones, so repetition matches a whole top level with no special case
-  nl = tokenTree cstParse "a\nb\nc";
-  assert ( delimiterOf nl == ";" and #contentOf nl == 3 )
-  assert ( apply((first matchesIn("'{'s;}+", nl))#1#"s", toString) == {"a", "b", "c"} )
+///
+
+TEST ///
+  -- alternation '{ a | b } is a variant rule: it matches if ANY branch matches, and
+  -- the matching branch contributes its bindings
+  declMacro("flop", "'{ 'a + 'b | 'a * 'b }", "h('a, 'b)");
+  assert ( expandSource "$flop 1 + 2 $" == "h ( 1 , 2 )" )      -- the + branch
+  assert ( expandSource "$flop 3 * 4 $" == "h ( 3 , 4 )" )      -- the * branch
+  assert ( (try expandSource "$flop 1 - 2 $" else "no") == "no" ) -- neither branch
+  -- an alternation may sit as one element inside a larger pattern, and its branches
+  -- may be typed holes: match f(_) where the argument is a Number or a String
+  ms = matchesIn("f('{ 'x:Number | 'x:String })", tokenTree cstParse "f(1) + f(\"s\") + f(z)");
+  assert ( #ms == 2 )                                          -- f(1), f("s"); not f(z)
+  -- a three-way alternation; each branch must parse as an operand of `|`
+  declMacro("scalar", "'{ 'x:Number | 'x:Identifier | 'x:String }", "S('x)");
+  assert ( expandSource "$scalar 42 $" == "S ( 42 )" )
+  assert ( expandSource "$scalar foo $" == "S ( foo )" )
+  assert ( (try expandSource "$scalar a + b $" else "no") == "no" )   -- an Infix matches none
 ///
 
 TEST ///

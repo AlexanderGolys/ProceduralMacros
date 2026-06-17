@@ -44,6 +44,17 @@ repQuantifier = t -> leftOf t
 repSeparator = t -> delimiterOf t
 repUnit = t -> contentOf t
 
+-- an alternation '{ a | b | ... } matches if ANY of its branches matches the same
+-- input node (a variant rule). Its own node KIND, like Metavar / Repetition: the
+-- branch patterns are its children, the other three fields are null. It is a
+-- PATTERN-only construct -- meaningless in a template, where instantiate rejects it.
+-- The branch that matches contributes its bindings; a branch that fails leaves none.
+Alternation = new SelfInitializingType of TokenTree
+
+alternationNode = branches -> Alternation(null, branches, null, null)
+isAlternation = t -> instance(t, Alternation)
+altBranches = t -> contentOf t
+
 -- a genuinely n-ary sequence node (the associative delimiters), never a repetition
 isSeqNode = t -> not isRepetition t and (delimiterOf t === "," or delimiterOf t === ";")
 
@@ -55,6 +66,7 @@ nodeKind = t -> (
     if isComment t then "Comment"
     else if isMetavar t then "Metavar"
     else if isRepetition t then "Repetition"
+    else if isAlternation t then "Alternation"
     else if isLeaf t then (
         s := leftOf t;
         if s === null then "Node"
@@ -76,9 +88,10 @@ nodeKind = t -> (
         else "Node"))
 
 -- the kinds a `'x:Kind` hole may name (control forms contribute If/While/For/Try/New)
-nodeKindNames = set {"Comment", "Metavar", "Repetition", "String", "Number", "Keyword",
-    "Identifier", "Operator", "Apply", "Sequence", "Arrow", "Infix", "Bracket",
-    "Prefix", "Postfix", "If", "While", "For", "Try", "New", "Clause", "Node"}
+nodeKindNames = set {"Comment", "Metavar", "Repetition", "Alternation", "String",
+    "Number", "Keyword", "Identifier", "Operator", "Apply", "Sequence", "Arrow",
+    "Infix", "Bracket", "Prefix", "Postfix", "If", "While", "For", "Try", "New",
+    "Statements", "Clause", "Node"}
 
 -- a metavariable is written 'name (leading apostrophe), NOT $name -- the $ sigil is
 -- reserved for macro APPLICATION, so patterns use ' to avoid the clash. A leading '
@@ -94,37 +107,43 @@ toPlaceholders = src -> (
         concatenate(metavarKindPrefix, "$2(", metavarPlaceholderPrefix, "$1)"), src);
     replace(///(?<![A-Za-z0-9'])'([A-Za-z][A-Za-z0-9]*)///, metavarPlaceholderPrefix | "$1", typed))
 
--- pre-scan: '{ P }+ / '{ P }* are not valid M2, so rewrite them to a function call
--- RepPlus( P ) / RepStar( P ) that parses normally and is recognised in markNodes.
--- Brace-balanced so a list literal {..} inside P is left alone; a `'` sigil before `{`
--- opens (only when the `'` is not a prime on an identifier, so f'{..} is left alone).
-repCallNames = new HashTable from {"+" => "RepPlus", "*" => "RepStar"}
+-- pre-scan: the brace forms '{ P }+ / '{ P }* / '{ A | B } are not valid M2, so
+-- rewrite each to a function call -- RepPlus(P) / RepStar(P) / Alt(A|B) -- that parses
+-- normally and is recognised in markNodes. The form is fixed by what follows `}`: a
+-- trailing `+`/`*` is a repetition, anything else an alternation (its branches are
+-- separated by the ordinary `|` infix). Brace-balanced, so a list literal {..} inside
+-- is left alone; a `'` before `{` opens only when it is not a prime on an identifier
+-- (so f'{..} is left alone).
+repCallNames = new HashTable from {"+" => "RepPlus", "*" => "RepStar", "|" => "Alt"}
 isIdentChar = c -> match("[A-Za-z0-9']", c)
 scanReps = src -> (
     n := #src;
     at := i -> if i < n then substring(i, 1, src) else "";
-    stack := {};                                  -- {bracePos, isRepOpen}
-    spans := {};                                  -- {sigilPos, closeBracePos, quantifier}
+    stack := {};                                  -- {bracePos, isBraceFormOpen}
+    spans := {};                                  -- {sigilPos, closeBracePos, form}
     i := 0;
     while i < n do (
         c := at i;
         if c == "{" then (
-            isRepOpen := i >= 1 and at(i-1) == "'" and (i < 2 or not isIdentChar at(i-2));
-            stack = append(stack, (i, isRepOpen)); i = i + 1)
+            isFormOpen := i >= 1 and at(i-1) == "'" and (i < 2 or not isIdentChar at(i-2));
+            stack = append(stack, (i, isFormOpen)); i = i + 1)
         else if c == "}" then (
             if #stack == 0 then error "scanReps: unbalanced }";
             top := last stack; stack = drop(stack, -1);
-            if top#1 and (at(i+1) == "+" or at(i+1) == "*")
-            then spans = append(spans, (top#0 - 1, i, at(i+1)));
+            -- `}+` / `}*` is a repetition; a `'{`-opened brace with neither is alternation
+            -- (form "|", the brace consumes only `}`); the `|` separators are kept verbatim
+            if top#1 then (
+                form := if at(i+1) == "+" or at(i+1) == "*" then at(i+1) else "|";
+                spans = append(spans, (top#0 - 1, i, form)));
             i = i + 1)
         else i = i + 1);
     if #spans == 0 then return src;
     opens := hashTable apply(spans, s -> (s#0, repCallNames#(s#2) | "("));
-    closes := set apply(spans, s -> s#1);
+    closes := hashTable apply(spans, s -> (s#1, if s#2 === "|" then 1 else 2));
     out := ""; j := 0;
     while j < n do (
-        if opens#?j then (out = out | opens#j; j = j + 2)          -- "'{" -> "RepX("
-        else if closes#?j then (out = out | ")"; j = j + 2)        -- "}+" / "}*" -> ")"
+        if opens#?j then (out = out | opens#j; j = j + 2)          -- "'{" -> "RepX(" / "Alt("
+        else if closes#?j then (out = out | ")"; j = j + closes#j) -- "}+"/"}*"/"}" -> ")"
         else (out = out | at j; j = j + 1));
     out)
 
@@ -143,6 +162,23 @@ unitOf = t -> (
     elems := if isSeqNode inner then contentOf inner else {inner};
     while #elems > 0 and isNullElement last elems do elems = drop(elems, -1);
     (sep, elems))
+
+-- an Alt(...) application produced by scanReps for an alternation '{ A | B }; returns
+-- the inner tree (the `|` infix chain) or null when t is not such a call
+altCallName = "Alt"
+altInnerOf = t -> (
+    if delimiterOf t === spaceOperator and #contentOf t == 2 and isLeaf (contentOf t)#0
+       and leftOf (contentOf t)#0 === altCallName
+    then (inner := contentOf (contentOf t)#1;
+        if #inner == 0 then error "empty '{ | } alternation"; inner#0)
+    else null)
+
+-- flatten the left-associative `|` infix spine into the list of alternation branches
+-- ('{ a | b | c } parses as ((a|b)|c)), so a, b, c are recovered as three branches)
+altBranchesOf = t -> (
+    if delimiterOf t === "|" and #contentOf t == 2
+    then join(altBranchesOf (contentOf t)#0, altBranchesOf (contentOf t)#1)
+    else {t})
 
 -- a MetavarKind<Kind>( <name placeholder> ) call produced for a typed hole `'x:If`;
 -- returns the named kind, or null when t is not such a call
@@ -166,6 +202,8 @@ markNodes = t -> (
     else if quantifierOf t =!= null then (
         (sep, elems) := unitOf t;
         repetitionNode(quantifierOf t, sep, apply(elems, markNodes)))
+    else if altInnerOf t =!= null then
+        alternationNode apply(altBranchesOf altInnerOf t, markNodes)
     else (setContent(t, apply(contentOf t, markNodes)); t))
 
 -- parse a pattern/template source into a tree with metavar / repetition nodes. The
@@ -236,6 +274,16 @@ matchInto = (pat, inp, b) -> (
             if b#?name then treeEquals(b#name, inp)
             else (b#name = inp; true))
     )
+    else if isAlternation pat then (
+        -- try each branch on a private table; commit the first that matches AND agrees
+        -- with bindings already made (a repeated metavar must stay structurally equal)
+        matched := false;
+        for branch in altBranches pat when not matched do (
+            tb := new MutableHashTable;
+            if matchInto(branch, inp, tb) and all(keys tb, k -> not b#?k or treeEquals(b#k, tb#k))
+            then (scan(keys tb, k -> b#k = tb#k); matched = true));
+        matched
+    )
     else if isRepetition pat then
         matchRepetition(pat, if isSeqNode inp then contentOf inp else {inp}, b)
     else if isSeqNode pat and any(contentOf pat, isRepetition) then (
@@ -285,6 +333,8 @@ expandRepetition = (rep, b) -> (
 -- repetition child expands to a run: spliced into an enclosing "," / ";" sequence,
 -- or wrapped in a fresh such sequence when it is a bracket's sole content.
 instantiate = (tmpl, b) -> (
+    if isAlternation tmpl then
+        error "alternation '{ a | b } is a pattern-only construct, not valid in a template";
     if isMetavar tmpl then (
         name := metavarName tmpl;
         if not b#?name

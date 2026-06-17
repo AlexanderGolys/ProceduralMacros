@@ -420,8 +420,30 @@ up TokenStream := TokenStream => ts -> (
     new TokenStream from {drop(chainOf ts, -1)}
 )
 
+-- ascend to the root (the cursor at the top of the same tree)
+root = method()
+root TokenStream := TokenStream => ts -> new TokenStream from {{rootOf ts}}
+
+-- the focused node's index among its parent's children (located by identity, so it
+-- is correct however the siblings have shifted); null at the root, which has none
+childIndex = method()
+childIndex TokenStream := ts -> if atTop ts then null else indexInParent ts
+
+-- move to the sibling `offset` positions over (offset 0 is the focus itself,
+-- 1 the next sibling, -1 the previous): up to the parent, then down to that child
+siblingOf = method()
+siblingOf(TokenStream, ZZ) := TokenStream => (ts, offset) -> (
+    if atTop ts then error "siblingOf: the root has no siblings";
+    child(up ts, childIndex ts + offset))
+
 length TokenStream := ZZ => ts -> childCount ts
+-- `_` descends to a child; its dual `^` ascends k levels (k = 0 is the focus, k = 1
+-- the parent). M2 has no usable prefix `&`, so the terse ascend is this binary `^`.
 TokenStream _ ZZ := TokenStream => (ts, i) -> child(ts, i)
+TokenStream ^ ZZ := TokenStream => (ts, k) -> (
+    if k < 0 then error "TokenStream ^ k: cannot ascend a negative number of levels";
+    if k >= #chainOf ts then error "TokenStream ^ k: cannot ascend past the root";
+    new TokenStream from {take(chainOf ts, #chainOf ts - k)})
 
 net TokenStream := Net => ts -> ("TokenStream @ depth " | toString(#chainOf ts - 1)) || net focus ts
 
