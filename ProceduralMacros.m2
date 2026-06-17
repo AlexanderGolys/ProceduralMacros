@@ -14,7 +14,7 @@ newPackage(
 
 export {
     "installMacro", "expandSource", "runSource",
-    "Macro", "nameOf", "transformOf", "macroNamed", "expandMacro", "declMacro", "quote", "Metavar", "Repetition", "matchesIn",
+    "Macro", "nameOf", "transformOf", "macroNamed", "expandMacro", "declMacro", "quote", "Metavar", "Repetition", "matchesIn", "nodeKind",
     "TokenTree", "tokenTree",
     "leaf", "infix", "prefix", "postfix", "delimited", "bracketed",
     "spaceOperator", "whitespaceDelimiter", "Comment",
@@ -188,7 +188,7 @@ load "./ProceduralMacros/Patterns.m2"
 
 installMacro("show", ts -> (
     e := focus ts;
-    quote("print($label | toString($e))",
+    quote("print('label | toString('e))",
         hashTable{"label" => leaf format(toString e | " = "), "e" => e})
 ))
 
@@ -219,10 +219,10 @@ TEST ///
 ///
 
 TEST ///
-  -- a declarative macro: pattern => template, with $-metavariables
-  declMacro("commute", "$a + $b", "$b + $a");
+  -- a declarative macro: pattern => template, with '-metavariables
+  declMacro("commute", "'a + 'b", "'b + 'a");
   assert ( expandSource "$commute 2 + x*y $" == "x * y + 2" )       -- binds, swaps, splices
-  declMacro("dup", "$x", "($x, $x)");
+  declMacro("dup", "'x", "('x, 'x)");
   assert ( expandSource "$dup f a $" == "( f a , f a )" )           -- one metavar, used twice
   -- a non-matching input is rejected
   assert ( (try expandSource "$commute 2 * 3 $" else "rejected") == "rejected" )
@@ -230,7 +230,7 @@ TEST ///
 
 TEST ///
   -- multiple rules, tried in order; first match wins, no match errors
-  declMacro("flip", {("$a + $b", "$b + $a"), ("$a * $b", "$b * $a")});
+  declMacro("flip", {("'a + 'b", "'b + 'a"), ("'a * 'b", "'b * 'a")});
   assert ( expandSource "$flip 1 + 2 $" == "2 + 1" )
   assert ( expandSource "$flip 3 * 4 $" == "4 * 3" )
   assert ( (try expandSource "$flip 1 - 2 $" else "no rule") == "no rule" )
@@ -238,7 +238,7 @@ TEST ///
 
 TEST ///
   -- quote: build output from a template + binding (the procedural-authoring win)
-  installMacro("twice2", ts -> quote("2 * ($e)", hashTable{"e" => focus ts}));
+  installMacro("twice2", ts -> quote("2 * ('e)", hashTable{"e" => focus ts}));
   assert ( expandSource "$twice2 3 + 4 $" == "2 * ( 3 + 4 )" )
 ///
 
@@ -246,9 +246,9 @@ TEST ///
   -- quote splices a COPY: repeated metavars are independent and the bound input
   -- is never aliased, so editing the result cannot mutate the input or a sibling
   e = leaf "x";
-  t = quote("($v, $v)", hashTable{"v" => e});
+  t = quote("('v, 'v)", hashTable{"v" => e});
   seq = (t_0)_0;                       -- the comma sequence inside the brackets
-  assert ( seq_0 =!= seq_1 )           -- the two $v slots are distinct objects
+  assert ( seq_0 =!= seq_1 )           -- the two 'v slots are distinct objects
   assert ( seq_0 =!= e and seq_1 =!= e )   -- and neither aliases the bound input
 ///
 
@@ -349,42 +349,62 @@ TEST ///
 TEST ///
   -- quote takes bindings inline as options (no hashTable wrapper); a HashTable
   -- still works, and a hole-free template needs none
-  assert ( toString quote("f($a, $b)", "a" => leaf "1", "b" => leaf "2") == "f ( 1 , 2 )" )
-  assert ( toString quote("g($x)", hashTable{"x" => leaf "9"}) == "g ( 9 )" )
+  assert ( toString quote("f('a, 'b)", "a" => leaf "1", "b" => leaf "2") == "f ( 1 , 2 )" )
+  assert ( toString quote("g('x)", hashTable{"x" => leaf "9"}) == "g ( 9 )" )
   assert ( toString quote("1 + 2") == "1 + 2" )
 ///
 
 TEST ///
-  -- repetition ${ unit }+ / ${ unit }* over "," and ";" sequences; unit metavars
+  -- repetition '{ unit }+ / '{ unit }* over "," and ";" sequences; unit metavars
   -- bind to lists, one entry per repetition
-  declMacro("collect", "f(${$x,}+)", "g(${$x,}+)");
+  declMacro("collect", "f('{'x,}+)", "g('{'x,}+)");
   assert ( expandSource "$collect f(a, b, c) $" == "g ( a , b , c )" )
   assert ( expandSource "$collect f(a) $" == "g ( a )" )          -- + matches a run of one
   -- a multi-element unit repeats in chunks; here each (a,b) pair is swapped
-  declMacro("swap2", "[${$a, $b,}+]", "[${$b, $a,}+]");
+  declMacro("swap2", "['{'a, 'b,}+]", "['{'b, 'a,}+]");
   assert ( expandSource "$swap2 [1, 2, 3, 4] $" == "[ 2 , 1 , 4 , 3 ]" )
   -- the unit may drop part of each repetition (keys of key => value pairs)
-  declMacro("keysOf", "{${$k => $v,}+}", "L(${$k,}+)");
+  declMacro("keysOf", "{'{'k => 'v,}+}", "L('{'k,}+)");
   assert ( expandSource "$keysOf {a => 1, b => 2, c => 3} $" == "L ( a , b , c )" )
   -- fixed elements may sit beside the repetition
-  declMacro("firstArg", "f($h, ${$t,}+)", "only($h)");
+  declMacro("firstArg", "f('h, '{'t,}+)", "only('h)");
   assert ( expandSource "$firstArg f(a, b, c) $" == "only ( a )" )
   -- * matches zero, + does not
-  declMacro("star", "g(${$x,}*)", "h(${$x,}*)");
+  declMacro("star", "g('{'x,}*)", "h('{'x,}*)");
   assert ( expandSource "$star g() $" == "h ( )" )
   -- repetition feeds matchesIn too: the run is captured as a list
-  ms = matchesIn("f(${$x,}+)", tokenTree cstParse "f(1, 2, 3)");
+  ms = matchesIn("f('{'x,}+)", tokenTree cstParse "f(1, 2, 3)");
   assert ( #ms == 1 and apply(ms#0#1#"x", toString) == {"1", "2", "3"} )
 ///
 
 TEST ///
   -- matchesIn searches the whole tree, returning every (node, bindings) pair
   tree = tokenTree cstParse "f(1) + g(2) + f(3)";
-  ms = matchesIn("f($x)", tree);
+  ms = matchesIn("f('x)", tree);
   assert ( #ms == 2 )                                          -- f(1) and f(3)
   assert ( apply(ms, m -> toString m#1#"x") == {"1", "3"} )    -- their captured args
-  assert ( #matchesIn("$a + $b", tree) == 2 )                  -- matches nest (both + nodes)
-  assert ( #matchesIn("zzz($x)", tree) == 0 )                  -- no match -> empty list
+  assert ( #matchesIn("'a + 'b", tree) == 2 )                  -- matches nest (both + nodes)
+  assert ( #matchesIn("zzz('x)", tree) == 0 )                  -- no match -> empty list
+///
+
+TEST ///
+  -- nodeKind classifies a node from its fields; the leaf String/Number split is the
+  -- distinction the shape alone cannot make
+  assert ( nodeKind (tokenTree cstParse "if c then x")_0 == "If" )
+  assert ( nodeKind (tokenTree cstParse "f x")_0 == "Apply" )
+  assert ( nodeKind (tokenTree cstParse "a + b")_0 == "Infix" )
+  assert ( nodeKind leaf "17" == "Number" )
+  assert ( nodeKind leaf "\"17\"" == "String" )        -- same text class, told apart
+  assert ( nodeKind leaf "foo" == "Identifier" and nodeKind leaf "while" == "Keyword" )
+///
+
+TEST ///
+  -- a typed hole 'x:Kind binds only a node of that kind
+  declMacro("ifGuard", "if 'c:Identifier then 'b", "guarded('c)");
+  assert ( expandSource "$ifGuard if ok then run $" == "guarded ( ok )" )   -- ok is an Identifier
+  assert ( (try expandSource "$ifGuard if 1 then run $" else "no") == "no" ) -- 1 is a Number, rejected
+  -- match all string-literal arguments anywhere in a call
+  assert ( #matchesIn("'s:String", tokenTree cstParse "f(\"a\", b, \"c\")") == 2 )
 ///
 
 TEST ///

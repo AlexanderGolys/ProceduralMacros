@@ -6,27 +6,32 @@
 --   instantiate(template, binding) -- splice bound subtrees into a template
 -- A declarative macro pairs them: match the input, expand the template.
 --
--- A metavariable `$x` binds (in a pattern) and splices (in a template). `$x` is
--- not valid M2 -- `parse` rejects `$` -- so pattern/template source is pre-scanned:
--- each `$x` becomes a reserved placeholder identifier, parsed, then converted to a
--- dedicated metavar NODE (a Metavar, its own TokenTree subtype). Because a metavar
--- is its own node type, it can never collide with a real identifier leaf; and INPUT
--- trees are never marked, so only the reserved placeholder prefix is unavailable
--- inside a pattern or template.
+-- A metavariable `'x` binds (in a pattern) and splices (in a template). The sigil is
+-- a leading apostrophe (NOT `$`, which is reserved for macro application) -- a leading
+-- `'` is a parse error, so it is free to pre-scan, while a trailing/interior `'` stays
+-- a normal prime identifier (f', x'). Each `'x` becomes a reserved placeholder
+-- identifier, parsed, then converted to a dedicated metavar NODE (a Metavar, its own
+-- TokenTree subtype). A hole may be typed, `'x:If`, to bind only nodes of that kind.
+-- Because a metavar is its own node type it never collides with a real identifier
+-- leaf; INPUT trees are never marked, so only the reserved prefixes are unavailable.
 
 -- a metavar is its own node KIND, like Comment: a self-initializing subtype of
 -- TokenTree built with the same Metavar(...) constructor as a plain node, so
 -- instance(t, Metavar) tells a hole apart from a real leaf and every accessor still
 -- dispatches by inheritance. The metavariable name is its Opening; it has no children.
+-- a metavar optionally carries a KIND constraint (from `'x:If`): the kind name
+-- lives in the Separator slot, null when the hole is untyped.
 Metavar = new SelfInitializingType of TokenTree
 
 metavarNode = method()
 metavarNode String := Metavar => name -> Metavar(name, {}, null, null)
+metavarNode(String, String) := Metavar => (name, kind) -> Metavar(name, {}, null, kind)
 
 isMetavar = t -> instance(t, Metavar)
 metavarName = t -> leftOf t
+metavarKind = t -> delimiterOf t
 
--- a repetition ${ unit }+ / ${ unit }* matches a RUN of elements in a "," or ";"
+-- a repetition '{ unit }+ / '{ unit }* matches a RUN of elements in a "," or ";"
 -- sequence (the only nodes M2 makes genuinely n-ary, hence the only place repetition
 -- stays a functor). Its own node KIND: the quantifier "+"/"*" is the Opening, the
 -- separator "," / ";" is the Separator, and the unit (the per-repetition element
@@ -42,24 +47,70 @@ repUnit = t -> contentOf t
 -- a genuinely n-ary sequence node (the associative delimiters), never a repetition
 isSeqNode = t -> not isRepetition t and (delimiterOf t === "," or delimiterOf t === ";")
 
--- the placeholder lives only between the pre-scan and the node conversion; its
--- prefix is reserved (a literal identifier starting with it is not supported)
-metavarPlaceholderPrefix = "MetavarHolePlaceholder"
-toPlaceholders = src -> replace(///\$([A-Za-z][A-Za-z0-9]*)///, metavarPlaceholderPrefix | "$1", src)
+-- the matchable KIND of a node, derived from the four fields (nothing stored). Most
+-- distinctions are structural; the one the shape can't make -- String vs Number, both
+-- leaf literals -- is read off the token text (a string keeps its quotes). Specific
+-- values are matched literally in the pattern; kinds are for matching by category.
+nodeKind = t -> (
+    if isComment t then "Comment"
+    else if isMetavar t then "Metavar"
+    else if isRepetition t then "Repetition"
+    else if isLeaf t then (
+        s := leftOf t;
+        if s === null then "Node"
+        else if s#0 == "\"" then "String"
+        else if match("^[0-9]", s) then "Number"
+        else if match("^[A-Za-z]", s) then (if m2Keywords#?s then "Keyword" else "Identifier")
+        else "Operator")
+    else (
+        d := delimiterOf t;
+        if d === spaceOperator then "Apply"
+        else if d === whitespaceDelimiter then (
+            cs := contentOf t; if #cs == 0 then "Clause" else capitalize leftOf cs#0)  -- If/While/For/Try/New
+        else if d === "," or d === ";" then "Sequence"
+        else if d === "->" then "Arrow"
+        else if instance(d, String) then "Infix"
+        else if leftOf t =!= null and rightOf t =!= null then "Bracket"
+        else if leftOf t =!= null then "Prefix"
+        else if rightOf t =!= null then "Postfix"
+        else "Node"))
 
--- pre-scan: ${ P }+ / ${ P }* are not valid M2, so rewrite them to a function call
+-- the kinds a `'x:Kind` hole may name (control forms contribute If/While/For/Try/New)
+nodeKindNames = set {"Comment", "Metavar", "Repetition", "String", "Number", "Keyword",
+    "Identifier", "Operator", "Apply", "Sequence", "Arrow", "Infix", "Bracket",
+    "Prefix", "Postfix", "If", "While", "For", "Try", "New", "Clause", "Node"}
+
+-- a metavariable is written 'name (leading apostrophe), NOT $name -- the $ sigil is
+-- reserved for macro APPLICATION, so patterns use ' to avoid the clash. A leading '
+-- is a parse error (free for us to pre-scan); a trailing or interior ' is a normal
+-- prime identifier (f', x'), so the sigil only fires when not preceded by an
+-- identifier character. Both placeholders below are reserved identifier prefixes.
+-- A typed hole `'x:If` is rewritten to a call MetavarKindIf( <name placeholder> ) --
+-- atomic, so it never tangles with operator precedence -- and recognised in markNodes.
+metavarPlaceholderPrefix = "MetavarHolePlaceholder"
+metavarKindPrefix = "MetavarKind"
+toPlaceholders = src -> (
+    typed := replace(///(?<![A-Za-z0-9'])'([A-Za-z][A-Za-z0-9]*):([A-Za-z][A-Za-z0-9]*)///,
+        concatenate(metavarKindPrefix, "$2(", metavarPlaceholderPrefix, "$1)"), src);
+    replace(///(?<![A-Za-z0-9'])'([A-Za-z][A-Za-z0-9]*)///, metavarPlaceholderPrefix | "$1", typed))
+
+-- pre-scan: '{ P }+ / '{ P }* are not valid M2, so rewrite them to a function call
 -- RepPlus( P ) / RepStar( P ) that parses normally and is recognised in markNodes.
--- Brace-balanced so a list literal {..} inside P is left alone; `$` before `{` opens.
+-- Brace-balanced so a list literal {..} inside P is left alone; a `'` sigil before `{`
+-- opens (only when the `'` is not a prime on an identifier, so f'{..} is left alone).
 repCallNames = new HashTable from {"+" => "RepPlus", "*" => "RepStar"}
+isIdentChar = c -> match("[A-Za-z0-9']", c)
 scanReps = src -> (
     n := #src;
     at := i -> if i < n then substring(i, 1, src) else "";
     stack := {};                                  -- {bracePos, isRepOpen}
-    spans := {};                                  -- {dollarPos, closeBracePos, quantifier}
+    spans := {};                                  -- {sigilPos, closeBracePos, quantifier}
     i := 0;
     while i < n do (
         c := at i;
-        if c == "{" then (stack = append(stack, (i, i >= 1 and at(i-1) == "$")); i = i + 1)
+        if c == "{" then (
+            isRepOpen := i >= 1 and at(i-1) == "'" and (i < 2 or not isIdentChar at(i-2));
+            stack = append(stack, (i, isRepOpen)); i = i + 1)
         else if c == "}" then (
             if #stack == 0 then error "scanReps: unbalanced }";
             top := last stack; stack = drop(stack, -1);
@@ -72,7 +123,7 @@ scanReps = src -> (
     closes := set apply(spans, s -> s#1);
     out := ""; j := 0;
     while j < n do (
-        if opens#?j then (out = out | opens#j; j = j + 2)          -- "${" -> "RepX("
+        if opens#?j then (out = out | opens#j; j = j + 2)          -- "'{" -> "RepX("
         else if closes#?j then (out = out | ")"; j = j + 2)        -- "}+" / "}*" -> ")"
         else (out = out | at j; j = j + 1));
     out)
@@ -84,7 +135,7 @@ quantifierOf = t -> (
     else null)
 
 -- the unit of a repetition call: the bracket's inner elements, with the trailing
--- "null" element left by the conventional trailing separator (`$x,`) dropped
+-- "null" element left by the conventional trailing separator (`'x,`) dropped
 isNullElement = t -> isLeaf t and leftOf t === "null"
 unitOf = t -> (
     inner := (contentOf (contentOf t)#1)#0;             -- RepX ( <inner> )
@@ -93,12 +144,25 @@ unitOf = t -> (
     while #elems > 0 and isNullElement last elems do elems = drop(elems, -1);
     (sep, elems))
 
--- convert pre-scanned placeholders into nodes: metavar leaves -> Metavar, and
--- RepPlus/RepStar calls -> Repetition (its unit recursively converted)
+-- a MetavarKind<Kind>( <name placeholder> ) call produced for a typed hole `'x:If`;
+-- returns the named kind, or null when t is not such a call
+typedKindOf = t -> (
+    if delimiterOf t === spaceOperator and #contentOf t == 2 and isLeaf (contentOf t)#0
+       and match("^" | metavarKindPrefix, leftOf (contentOf t)#0)
+    then substring(#metavarKindPrefix, leftOf (contentOf t)#0)
+    else null)
+
+-- convert pre-scanned placeholders into nodes: metavar leaves -> Metavar, typed-hole
+-- calls -> Metavar with a kind, and RepPlus/RepStar calls -> Repetition (unit recursed)
 markNodes = t -> (
     if isLeaf t then (
         if leftOf t =!= null and match("^" | metavarPlaceholderPrefix, leftOf t)
         then metavarNode substring(#metavarPlaceholderPrefix, leftOf t) else t)
+    else if typedKindOf t =!= null then (
+        kind := typedKindOf t;
+        if not nodeKindNames#?kind then error("unknown node kind in pattern: '" | kind);
+        hole := leftOf (contentOf (contentOf t)#1)#0;     -- the name placeholder leaf
+        metavarNode(substring(#metavarPlaceholderPrefix, hole), kind))
     else if quantifierOf t =!= null then (
         (sep, elems) := unitOf t;
         repetitionNode(quantifierOf t, sep, apply(elems, markNodes)))
@@ -132,7 +196,7 @@ treeEquals = (a, b) -> (
 -- a list (one entry per chunk). "+" needs >= 1 chunk, "*" allows 0.
 matchRepetition = (rep, ielems, b) -> (
     unit := repUnit rep; u := #unit;
-    if u == 0 then error "empty ${ } repetition unit";
+    if u == 0 then error "empty '{ } repetition unit";
     if #ielems % u != 0 then return false;
     nChunks := #ielems // u;
     if repQuantifier rep === "+" and nChunks == 0 then return false;
@@ -150,7 +214,7 @@ matchRepetition = (rep, ielems, b) -> (
 matchElems = (pelems, ielems, b) -> (
     reps := positions(pelems, isRepetition);
     if #reps == 0 then #pelems == #ielems and all(#pelems, i -> matchInto(pelems#i, ielems#i, b))
-    else if #reps > 1 then error "a pattern sequence may hold at most one ${ } repetition"
+    else if #reps > 1 then error "a pattern sequence may hold at most one '{ } repetition"
     else (
         r := first reps;
         before := take(pelems, r);
@@ -166,9 +230,11 @@ matchElems = (pelems, ielems, b) -> (
 -- repetition pattern (alone, or among a "," / ";" sequence) matches a variable run.
 matchInto = (pat, inp, b) -> (
     if isMetavar pat then (
-        name := metavarName pat;
-        if b#?name then treeEquals(b#name, inp)
-        else (b#name = inp; true)
+        if metavarKind pat =!= null and nodeKind inp =!= metavarKind pat then false
+        else (
+            name := metavarName pat;
+            if b#?name then treeEquals(b#name, inp)
+            else (b#name = inp; true))
     )
     else if isRepetition pat then
         matchRepetition(pat, if isSeqNode inp then contentOf inp else {inp}, b)
