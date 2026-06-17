@@ -104,11 +104,20 @@ attachComments(TokenTree, String) := TokenTree => (root, src) -> (
         )
     );
 
-    -- the root cell separator (a `;`) between top-level cells is optional: cells
-    -- may instead be newline-separated, in which case there is none to consume
+    -- consume the boundary after a top-level statement, returning whether it was a
+    -- `;` (which SUPPRESSES the statement's print) rather than a newline / end. parse
+    -- conflates the two and silently accepts `;;`; here we recover the `;` from the
+    -- source and reject the illegal `;;` (an empty statement) that parse let through.
     consumeSep := () -> (
-        while st#"pos" < n and isWSat st#"pos" do st#"pos" = st#"pos" + 1;
-        if starts(st#"pos", ";") then st#"pos" = st#"pos" + 1
+        skipTrivia();
+        suppressed := starts(st#"pos", ";");
+        if suppressed then (
+            st#"pos" = st#"pos" + 1;
+            skipTrivia();
+            if starts(st#"pos", ";") then
+                error "attachComments: ';;' (an empty statement) is not valid M2 -- parse accepts it, but it is a syntax error"
+        );
+        suppressed
     );
 
     takePending := () -> (cs := st#"pending"; st#"pending" = {}; cs);
@@ -119,10 +128,12 @@ attachComments(TokenTree, String) := TokenTree => (root, src) -> (
     for ci to #cells - 1 do (
         skipTrivia();
         out = join(out, takePending());              -- comments leading this cell
-        out = append(out, cells#ci);
-        scan(spines#ci, consumeTok);
-        out = join(out, takePending());              -- comments inside the cell body
-        consumeSep()
+        scan(spines#ci, consumeTok);                 -- consume the cell's tokens
+        suppressed := consumeSep();                  -- the trailing `;`, if any
+        -- a suppressed top-level statement is `stmt;` -- a postfix `;` -- restoring
+        -- the print/suppress distinction parse flattened away
+        out = append(out, if suppressed then postfix(cells#ci, ";") else cells#ci);
+        out = join(out, takePending())               -- comments inside / after the cell body
     );
     skipTrivia();
     out = join(out, takePending());                  -- comments after the last cell

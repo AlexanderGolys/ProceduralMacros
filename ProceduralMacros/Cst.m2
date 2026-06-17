@@ -19,10 +19,20 @@ protect symbol Closing      -- boundary text after the content  (postfix op / cl
 protect symbol Items        -- the child nodes, in order        (a MutableList, possibly empty)
 protect symbol Separator    -- what is placed between items      (infix op, sequence delim, or a synthetic symbol)
 
--- The two synthetic separators are protected symbols rather than text, so
+-- The three synthetic separators are protected symbols rather than text, so
 -- `instance(delim, Symbol)` distinguishes them from a real operator (a String).
 protect symbol spaceOperator        -- juxtaposition / function application (M2's SPACE)
 protect symbol whitespaceDelimiter  -- the gap between clauses of a control form
+-- The boundary between top-level statements. `parse` conflates `;`, a newline, a
+-- trailing `;` and even an illegal `;;` into one flat top-level list, but they are
+-- NOT equivalent: a trailing `;` SUPPRESSES the statement's print (an overridable
+-- callback), so it is genuinely different logic. So the top level is its OWN node --
+-- statements joined by this separator, each suppressed statement wrapped `stmt;`
+-- (a postfix `;`) -- distinct from an in-cell `;` sequence, which parse represents
+-- faithfully and we leave as `delimited(";", ...)`. tokenTree alone cannot recover
+-- which statements were suppressed (parse dropped that); parseWithComments does, by
+-- re-scanning the source. (See Comments.m2.)
+protect symbol statementSeparator
 
 --------------------------------------------------------------------
 -- Raw CST predicates (operate on parse's output)
@@ -225,7 +235,10 @@ tokenTree BasicList := TokenTree => node -> (
     if isCSTToken node then
         leaf leafText node
     else if not isNode node then
-        delimited(";", apply(toList node, tokenTree))
+        -- the top-level statement list: its own node KIND, NOT a `;` sequence (see the
+        -- statementSeparator note). Every statement starts out un-suppressed here;
+        -- parseWithComments marks the suppressed ones from the source.
+        delimited(statementSeparator, apply(toList node, tokenTree))
     else (
         built := runHooks(symbol tokenTree, node);
         if built === null then 
@@ -287,7 +300,8 @@ sourceOf = t -> if t === null then "" else flatten t
 -- synthetic separator (application / clause gap) collapses to a single space
 separatorOf = t -> (
     d := delimiterOf t;
-    if d === null or instance(d, Symbol) then " " else " " | d | " "
+    if d === statementSeparator then "\n"          -- top-level statements sit on their own lines
+    else if d === null or instance(d, Symbol) then " " else " " | d | " "
 )
 
 -- join a node's children. A recovered comment carries its own surrounding
@@ -354,6 +368,7 @@ nodeLabel = t -> (
     d := delimiterOf t;
     if d =!= null then (
         if d === spaceOperator then "apply"
+        else if d === statementSeparator then "statements"
         else if d === whitespaceDelimiter then (
             cs := contentOf t;
             if #cs == 0 then "clauses" else capitalize leftOf cs#0

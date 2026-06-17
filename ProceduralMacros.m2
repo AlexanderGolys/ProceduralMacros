@@ -18,7 +18,7 @@ export {
     "Metavar", "Repetition", "Alternation", "matchesIn", "nodeKind",
     "TokenTree", "tokenTree",
     "leaf", "infix", "prefix", "postfix", "delimited", "bracketed",
-    "spaceOperator", "whitespaceDelimiter", "Comment",
+    "spaceOperator", "whitespaceDelimiter", "statementSeparator", "Comment",
     "commentNode", "isComment", "attachComments", "parseWithComments",
     "isLeaf", "tokenClass",
     "leftOf", "rightOf", "delimiterOf", "contentOf",
@@ -313,7 +313,8 @@ TEST ///
 TEST ///
   -- the unified node: the shape is read straight off the four field accessors
   t = tokenTree cstParse "a + b";
-  assert ( delimiterOf t == ";" )                            -- top level is a ";" sequence
+  assert ( delimiterOf t === statementSeparator )            -- top level is the statement list
+  assert ( nodeKind t == "Statements" )
   bin = t_0;                                                  -- the a + b infix node
   assert ( delimiterOf bin == "+" )
   assert ( contentOf bin / leftOf == {"a", "b"} )            -- operands are leaves; the text is in Opening
@@ -443,6 +444,21 @@ TEST ///
 ///
 
 TEST ///
+  -- the top-level terminator: parse conflates `;`, a newline and a trailing `;`, but a
+  -- trailing `;` SUPPRESSES the print. parseWithComments recovers that from the source:
+  -- a suppressed statement becomes a postfix `;`, a printed one stays bare.
+  t = parseWithComments "a = 1;\nb = 2";
+  assert ( nodeKind t == "Statements" )
+  assert ( nodeKind (contentOf t)#0 == "Postfix" and rightOf (contentOf t)#0 == ";" )  -- a = 1; suppressed
+  assert ( nodeKind (contentOf t)#1 == "Infix" )                                       -- b = 2 printed
+  assert ( toString t == "a = 1 ;\nb = 2" )                                            -- and it round-trips
+  -- in-cell `;` is faithful in parse and is left untouched (only the top level was bugged)
+  assert ( nodeKind ((tokenTree cstParse "(a; b)")_0_0) == "Sequence" )
+  -- parse silently accepts `;;`; the source-aware pass rejects it as the syntax error it is
+  assert ( (try parseWithComments "a;; b" else "rejected") == "rejected" )
+///
+
+TEST ///
   -- comment recovery: parse discards comments, parseWithComments re-attaches them
   t = parseWithComments "-- doc\nx = 1  -- trailing";
   comments = select(contentOf t, isComment);
@@ -463,6 +479,6 @@ TEST ///
 -- check "ProceduralMacros"
 -- uninstallPackage "ProceduralMacros"; restart; installPackage "ProceduralMacros"; viewHelp "ProceduralMacros"
 
--- Inspect parsed examples (net shows the structure tree; _0 drops the top ";" wrapper):
+-- Inspect parsed examples (net shows the structure tree; _0 drops the top statement-list wrapper):
 --   gallery = examples -> scan(examples, s -> << s << endl << net (tokenTree cstParse s)_0 << endl << endl)
 --   gallery {"f(a, b) + 3", "if x then y else z", "x -> x^2", "-a!", "new T of B from C"}

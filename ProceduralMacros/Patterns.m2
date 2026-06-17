@@ -55,8 +55,11 @@ alternationNode = branches -> Alternation(null, branches, null, null)
 isAlternation = t -> instance(t, Alternation)
 altBranches = t -> contentOf t
 
--- a genuinely n-ary sequence node (the associative delimiters), never a repetition
-isSeqNode = t -> not isRepetition t and (delimiterOf t === "," or delimiterOf t === ";")
+-- a genuinely n-ary sequence node (the freely-associative delimiters: "," and ";",
+-- plus the top-level statement list, which is "," / ";"'s associative sibling), never
+-- a repetition. These are the only nodes a repetition / element match may range over.
+isSeqNode = t -> not isRepetition t and
+    (delimiterOf t === "," or delimiterOf t === ";" or delimiterOf t === statementSeparator)
 
 -- the matchable KIND of a node, derived from the four fields (nothing stored). Most
 -- distinctions are structural; the one the shape can't make -- String vs Number, both
@@ -77,6 +80,7 @@ nodeKind = t -> (
     else (
         d := delimiterOf t;
         if d === spaceOperator then "Apply"
+        else if d === statementSeparator then "Statements"   -- the top-level statement list
         else if d === whitespaceDelimiter then (
             cs := contentOf t; if #cs == 0 then "Clause" else capitalize leftOf cs#0)  -- If/While/For/Try/New
         else if d === "," or d === ";" then "Sequence"
@@ -377,11 +381,11 @@ matchesIn(TokenTree, TokenTree) := List => (pat, tree) -> (
     below := flatten apply(contentOf tree, c -> matchesIn(pat, c));
     here := matchPattern(pat, tree);
     if here =!= null then prepend((tree, here), below) else below)
--- a source pattern parses as a one-cell top-level ";" sequence; we search against
--- bare subtrees, so match the cell itself, not its sequence wrapper
+-- a source pattern parses as a one-cell top-level statement list; we search against
+-- bare subtrees, so match the cell itself, not its statement-list wrapper
 patternCell = src -> (
     p := parseTemplate src;
-    if delimiterOf p === ";" and #contentOf p == 1 then (contentOf p)#0 else p)
+    if delimiterOf p === statementSeparator and #contentOf p == 1 then (contentOf p)#0 else p)
 matchesIn(String, TokenTree) := List => (patSrc, tree) -> matchesIn(patternCell patSrc, tree)
 
 -- expand the first (pattern, template) rule whose pattern matches the input
