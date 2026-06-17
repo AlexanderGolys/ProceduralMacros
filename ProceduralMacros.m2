@@ -375,6 +375,11 @@ TEST ///
   -- repetition feeds matchesIn too: the run is captured as a list
   ms = matchesIn("f('{'x,}+)", tokenTree cstParse "f(1, 2, 3)");
   assert ( #ms == 1 and apply(ms#0#1#"x", toString) == {"1", "2", "3"} )
+  -- top-level statements separated by NEWLINES are the same ";" n-ary node as ";"
+  -- separated ones, so repetition matches a whole top level with no special case
+  nl = tokenTree cstParse "a\nb\nc";
+  assert ( delimiterOf nl == ";" and #contentOf nl == 3 )
+  assert ( apply((first matchesIn("'{'s;}+", nl))#1#"s", toString) == {"a", "b", "c"} )
 ///
 
 TEST ///
