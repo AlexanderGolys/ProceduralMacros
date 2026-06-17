@@ -122,6 +122,19 @@ bracketed = method()
 bracketed(String, TokenTree, String) := TokenTree => (o, inner, c) -> mkNode(o, {inner}, c, null)
 bracketed(String, Nothing, String) := TokenTree => (o, inner, c) -> mkNode(o, {}, c, null)
 
+-- a comment is its own node KIND, not a separator or a flavour of leaf: a subtype
+-- of TokenTree, so instance(t, Comment) tells it apart from a string/identifier
+-- leaf while every TokenTree accessor still dispatches to it by inheritance. Its
+-- full text (including the -- or -* *- delimiters) is the Opening, so it flattens
+-- verbatim; the other three fields stay at their childless-leaf defaults.
+Comment = new Type of TokenTree
+
+commentNode = method()
+commentNode String := Comment => text -> newClass(Comment, mkNode(text, {}, null, null))
+
+isComment = method()
+isComment TokenTree := Boolean => t -> instance(t, Comment)
+
 
 --------------------------------------------------------------------
 -- Accessors and predicates (a field reads back as its value, null when unset)
@@ -266,8 +279,23 @@ separatorOf = t -> (
     if d === null or instance(d, Symbol) then " " else " " | d | " "
 )
 
+-- join a node's children. A recovered comment carries its own surrounding
+-- newlines and is NOT wrapped in the node's operator separator (a `;`/`,`/`+`
+-- around a comment would be wrong, and a trailing `--` comment must end the line
+-- so it does not swallow what follows); ordinary children join with the separator.
+joinChildren = (sep, cs) -> (
+    if #cs == 0 then return "";
+    piece := c -> if isComment c then "\n" | leftOf c | "\n" else sourceOf c;
+    out := piece first cs;
+    for i from 1 to #cs - 1 do (
+        glue := if isComment cs#(i - 1) or isComment cs#i then "" else sep;
+        out = out | glue | piece cs#i
+    );
+    out
+)
+
 flatten TokenTree := String => t -> (
-    body := demark(separatorOf t, apply(contentOf t, sourceOf));
+    body := joinChildren(separatorOf t, contentOf t);
     pre := leftOf t ?? "";
     post := rightOf t ?? "";
     demark(" ", select({pre, body, post}, s -> s != ""))
@@ -284,6 +312,7 @@ m2Keywords = set select(keys Core.Dictionary, s -> instance(Core.Dictionary#s, K
 tokenClass = method()
 tokenClass String := String => s -> (
     if #s == 0 then "punctuation"
+    else if match(///^(--|-\*)///, s) then "comment"
     else if s#0 == "\"" or match("^[0-9]", s) then "literal"
     else if match("^[A-Za-z]", s) then
         if m2Keywords#?s then "keyword" else "symbol"
@@ -309,6 +338,8 @@ capitalize = s -> if #s == 0 then s else toUpper substring(0, 1, s) | substring(
 -- straight off the fields: a delimiter names the join (the synthetic ones name
 -- their role), a fence pair names a bracket, else the boundary token
 nodeLabel = t -> (
+    if isComment t then "comment " | format leftOf t
+    else (
     d := delimiterOf t;
     if d =!= null then (
         if d === spaceOperator then "apply"
@@ -322,6 +353,7 @@ nodeLabel = t -> (
     else if leftOf t =!= null then labelFor leftOf t
     else if rightOf t =!= null then labelFor rightOf t
     else "·"
+    )
 )
 
 treeBlock = t -> (

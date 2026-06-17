@@ -17,7 +17,8 @@ export {
     "Macro", "nameOf", "transformOf", "macroNamed", "expandMacro", "declMacro", "quote",
     "TokenTree", "tokenTree",
     "leaf", "infix", "prefix", "postfix", "delimited", "bracketed",
-    "spaceOperator", "whitespaceDelimiter",
+    "spaceOperator", "whitespaceDelimiter", "Comment",
+    "commentNode", "isComment", "attachComments", "parseWithComments",
     "isLeaf", "tokenClass",
     "leftOf", "rightOf", "delimiterOf", "contentOf",
     "setLeft", "setRight", "setDelimiter", "setItem", "appendItem",
@@ -28,6 +29,9 @@ export {
 
 -- The CST layer lives in an auxiliary file; the macro layer below builds on it.
 load "./ProceduralMacros/Cst.m2"
+
+-- comment recovery (re-scans the source to re-attach the comments parse discards)
+load "./ProceduralMacros/Comments.m2"
 
 --------------------------------------------------------------------
 -- Macro -- a named source-to-source transform
@@ -340,6 +344,19 @@ TEST ///
   assert ( ls#0 == "punctuation \"+\"" )           -- the node is labelled by its token's class
   assert ( ls#1 == "├─ symbol \"a\"" )
   assert ( ls#2 == "└─ symbol \"b\"" )
+///
+
+TEST ///
+  -- comment recovery: parse discards comments, parseWithComments re-attaches them
+  t = parseWithComments "-- doc\nx = 1  -- trailing";
+  comments = select(contentOf t, isComment);
+  assert ( #comments == 2 )                                 -- both comments recovered
+  assert ( comments / leftOf == {"-- doc", "-- trailing"} ) -- full text, delimiters kept
+  assert ( instance(comments#0, Comment) )                  -- a comment is its own node type
+  assert ( not isComment leaf "x" )                         -- a real leaf is not a Comment
+  -- a -- inside a string is text, not a comment; a real block comment is recovered
+  u = parseWithComments "s = \"-- text\"  -* note *-";
+  assert ( (select(contentOf u, isComment)) / leftOf == {"-* note *-"} )
 ///
 
 --end--
