@@ -80,18 +80,17 @@ sequenceDelimiters = set {",", ";"}
 
 TokenTree = new SelfInitializingType of MutableHashTable
 
--- the four-field option list every node carries; a SelfInitializing TokenTree (or
--- any subtype) applied to it builds the node in one shot. Factored out so the
--- subtype constructors (Comment, and the macro-layer Metavar) reuse the one layout.
-nodeOptions = (open, items, close, delim) -> {
-    Opening => open,
-    Items => new MutableList from items,
-    Separator => delim,
-    Closing => close
+-- the constructor: TokenTree(opening, items, closing, separator) builds a node, and
+-- every node carries all four fields. It is installed as the type's own `new from`
+-- (which is why TokenTree is a SelfInitializingType) rather than a standalone helper,
+-- so a subtype constructs the same way and `type` keeps the requested subclass --
+-- Comment(...) / Metavar(...) reuse this one layout and yield their own class.
+new TokenTree from Sequence := (type, s) -> new type from {
+    Opening => s#0,
+    Items => new MutableList from s#1,
+    Closing => s#2,
+    Separator => s#3
 }
-
--- the sole builder for a plain node
-mkNode = (open, items, close, delim) -> TokenTree nodeOptions(open, items, close, delim)
 
 --------------------------------------------------------------------
 -- Constructors -- strict-typed methods. Operands are real TokenTree nodes (build a
@@ -100,42 +99,42 @@ mkNode = (open, items, close, delim) -> TokenTree nodeOptions(open, items, close
 --------------------------------------------------------------------
 
 leaf = method()
-leaf String := TokenTree => s -> mkNode(s, {}, null, null)
+leaf String := TokenTree => s -> TokenTree(s, {}, null, null)
 
 -- two operands joined by an operator. The operator is a real operator String, or a
 -- synthetic Symbol: juxtaposition (`f x`) is just a binary operator whose symbol is
 -- spaceOperator, so application is an infix and needs no constructor of its own.
 infix = method()
 infix(TokenTree, String, TokenTree) :=
-infix(TokenTree, Symbol, TokenTree) := (l, op, r) -> mkNode(null, {l, r}, null, op)
+infix(TokenTree, Symbol, TokenTree) := (l, op, r) -> TokenTree(null, {l, r}, null, op)
 
 prefix = method()
-prefix(String, TokenTree) := TokenTree => (op, r) -> mkNode(op, {r}, null, null)
+prefix(String, TokenTree) := TokenTree => (op, r) -> TokenTree(op, {r}, null, null)
 
 postfix = method()
-postfix(TokenTree, String) := TokenTree => (l, op) -> mkNode(null, {l}, op, null)
+postfix(TokenTree, String) := TokenTree => (l, op) -> TokenTree(null, {l}, op, null)
 
 -- n operands joined by a delimiter (a real delimiter String, or the synthetic
 -- whitespaceDelimiter Symbol of a clause sequence)
 delimited = method()
 delimited(String, BasicList) :=
-delimited(Symbol, BasicList) := (delim, items) -> mkNode(null, toList items, null, delim)
+delimited(Symbol, BasicList) := (delim, items) -> TokenTree(null, toList items, null, delim)
 
 -- a fenced node; the inner is a TokenTree, or absent for an empty `()`
 bracketed = method()
-bracketed(String, TokenTree, String) := TokenTree => (o, inner, c) -> mkNode(o, {inner}, c, null)
-bracketed(String, Nothing, String) := TokenTree => (o, inner, c) -> mkNode(o, {}, c, null)
+bracketed(String, TokenTree, String) := TokenTree => (o, inner, c) -> TokenTree(o, {inner}, c, null)
+bracketed(String, Nothing, String) := TokenTree => (o, inner, c) -> TokenTree(o, {}, c, null)
 
 -- a comment is its own node KIND, not a separator or a flavour of leaf: a
--- self-initializing subtype of TokenTree, so it is built with the same `Type opts`
--- constructor sugar as a plain node, instance(t, Comment) tells it apart from a
--- string/identifier leaf, and every TokenTree accessor still dispatches to it by
--- inheritance. Its full text (including the -- or -* *- delimiters) is the Opening,
--- so it flattens verbatim; the other three fields stay at their leaf defaults.
+-- self-initializing subtype of TokenTree built with the same Comment(...) constructor
+-- as a plain node, so instance(t, Comment) tells it apart from a string/identifier
+-- leaf and every TokenTree accessor still dispatches to it by inheritance. Its full
+-- text (including the -- or -* *- delimiters) is the Opening, so it flattens verbatim;
+-- the other three fields stay at their leaf defaults.
 Comment = new SelfInitializingType of TokenTree
 
 commentNode = method()
-commentNode String := Comment => text -> Comment nodeOptions(text, {}, null, null)
+commentNode String := Comment => text -> Comment(text, {}, null, null)
 
 isComment = method()
 isComment TokenTree := Boolean => t -> instance(t, Comment)

@@ -9,20 +9,19 @@
 -- A metavariable `$x` binds (in a pattern) and splices (in a template). `$x` is
 -- not valid M2 -- `parse` rejects `$` -- so pattern/template source is pre-scanned:
 -- each `$x` becomes a reserved placeholder identifier, parsed, then converted to a
--- dedicated metavar NODE tagged by a protected Symbol (mirroring spaceOperator /
--- whitespaceDelimiter). Because the tag is a Symbol, a metavar can never collide
--- with a real identifier (a String) the way a magic-prefix leaf could; and INPUT
+-- dedicated metavar NODE (a Metavar, its own TokenTree subtype). Because a metavar
+-- is its own node type, it can never collide with a real identifier leaf; and INPUT
 -- trees are never marked, so only the reserved placeholder prefix is unavailable
 -- inside a pattern or template.
 
 -- a metavar is its own node KIND, like Comment: a self-initializing subtype of
--- TokenTree built with the same `Type opts` constructor sugar, so instance(t,
--- Metavar) tells a hole apart from a real leaf and every accessor still dispatches
--- by inheritance. The metavariable name is its Opening; it has no children.
+-- TokenTree built with the same Metavar(...) constructor as a plain node, so
+-- instance(t, Metavar) tells a hole apart from a real leaf and every accessor still
+-- dispatches by inheritance. The metavariable name is its Opening; it has no children.
 Metavar = new SelfInitializingType of TokenTree
 
 metavarNode = method()
-metavarNode String := Metavar => name -> Metavar nodeOptions(name, {}, null, null)
+metavarNode String := Metavar => name -> Metavar(name, {}, null, null)
 
 isMetavar = t -> instance(t, Metavar)
 metavarName = t -> leftOf t
@@ -74,7 +73,7 @@ matchPattern = (pat, inp) -> (
     if matchInto(pat, inp, b) then new HashTable from b else null)
 
 -- a deep copy of a tree, so a spliced subtree never aliases the input or a sibling
-cloneTree = t -> mkNode(leftOf t, apply(contentOf t, cloneTree), rightOf t, delimiterOf t)
+cloneTree = t -> TokenTree(leftOf t, apply(contentOf t, cloneTree), rightOf t, delimiterOf t)
 
 -- rebuild a template tree, splicing a fresh COPY of the bound subtree for each
 -- metavariable -- copying so the result aliases neither the input nor a repeated
@@ -82,10 +81,11 @@ cloneTree = t -> mkNode(leftOf t, apply(contentOf t, cloneTree), rightOf t, deli
 instantiate = (tmpl, b) -> (
     if isMetavar tmpl then (
         name := metavarName tmpl;
-        if not b#?name then error("template metavariable $" | name | " is unbound");
+        if not b#?name
+            then error("template metavariable $" | name | " is unbound");
         cloneTree b#name
     )
-    else mkNode(leftOf tmpl, apply(contentOf tmpl, c -> instantiate(c, b)), rightOf tmpl, delimiterOf tmpl))
+    else TokenTree(leftOf tmpl, apply(contentOf tmpl, c -> instantiate(c, b)), rightOf tmpl, delimiterOf tmpl))
 
 -- quote: instantiate a template written as source against a name -> subtree
 -- binding. The output half of declarative macros, exposed so a procedural
@@ -99,16 +99,18 @@ expandRules = (name, rules, inp) -> (
     for r in rules do (
         (pat, tmpl) := r;
         b := matchPattern(pat, inp);
-        if b =!= null then return instantiate(tmpl, b)
-    );
-    error(name | ": no rule matched the input"))
+        if b =!= null then
+            return instantiate(tmpl, b)
+    ); error(name | ": no rule matched the input"))
 
 -- a declarative macro: a list of (pattern, template) source pairs, tried in order;
 -- each pair is parsed once. A rule may be a {p, t} list or a (p, t) sequence.
 declMacro = method()
+
 declMacro(String, List) := Macro => (name, rules) -> (
     scan(rules, r -> if not ((instance(r, Sequence) or instance(r, List)) and #r == 2) then
         error(name | ": each rule must be a (pattern, template) pair, got " | toString r));
     parsed := apply(rules, r -> (parseTemplate r#0, parseTemplate r#1));
     installMacro(name, ts -> expandRules(name, parsed, focus ts)))
+
 declMacro(String, String, String) := Macro => (name, p, t) -> declMacro(name, {(p, t)})
