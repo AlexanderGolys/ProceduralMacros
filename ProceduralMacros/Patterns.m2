@@ -2,28 +2,57 @@
 -- ProceduralMacros / Patterns.m2 -- declarative (pattern => template) macros.
 --
 -- The two primitives everything else re-skins:
---   matchPattern(pattern, input)  -- structural match; binds metavariables
+--   matchPattern(pattern, input)   -- structural match; binds metavariables
 --   instantiate(template, binding) -- splice bound subtrees into a template
 -- A declarative macro pairs them: match the input, expand the template.
 --
 -- A metavariable `$x` binds (in a pattern) and splices (in a template). `$x` is
--- not valid M2 -- `parse` rejects `$` -- so pattern/template source is pre-scanned,
--- rewriting each `$x` to a marker leaf that the two primitives recognise.
+-- not valid M2 -- `parse` rejects `$` -- so pattern/template source is pre-scanned:
+-- each `$x` becomes a reserved placeholder identifier, parsed, then converted to a
+-- dedicated metavar NODE tagged by a protected Symbol (mirroring spaceOperator /
+-- whitespaceDelimiter). Because the tag is a Symbol, a metavar can never collide
+-- with a real identifier (a String) the way a magic-prefix leaf could; and INPUT
+-- trees are never marked, so only the reserved placeholder prefix is unavailable
+-- inside a pattern or template.
 
--- the marker must be a valid M2 identifier (letter-led, no `_` -- that is the
--- subscript operator), distinctive enough not to collide with ordinary names
-metavarMarker = "metavarHole"
-toMarkers = src -> replace(///\$([A-Za-z][A-Za-z0-9]*)///, metavarMarker | "$1", src)
+-- a metavar node: the protected Symbol sits in the Separator slot, the name is the
+-- text of its single leaf
+protect symbol metavariable
+metavarNode = name -> mkNode(null, {leaf name}, null, metavariable)
+isMetavar = t -> delimiterOf t === metavariable
+metavarName = t -> leftOf (contentOf t)#0
 
-isMetavar = t -> isLeaf t and leftOf t =!= null and match("^" | metavarMarker, leftOf t)
-metavarName = t -> substring(#metavarMarker, leftOf t)
+-- the placeholder lives only between the pre-scan and the node conversion; its
+-- prefix is reserved (a literal identifier starting with it is not supported)
+metavarPlaceholderPrefix = "MetavarHolePlaceholder"
+toPlaceholders = src -> replace(///\$([A-Za-z][A-Za-z0-9]*)///, metavarPlaceholderPrefix | "$1", src)
+markMetavars = t -> (
+    if isLeaf t and leftOf t =!= null and match("^" | metavarPlaceholderPrefix, leftOf t)
+    then metavarNode substring(#metavarPlaceholderPrefix, leftOf t)
+    else (setContent(t, apply(contentOf t, markMetavars)); t))
+
+-- parse a pattern/template source into a tree with metavar nodes. The parse is
+-- pure and the result is treated read-only by matchPattern/instantiate, so it is
+-- cached -- a quote-based macro body no longer re-parses its template each call.
+templateCache = new MutableHashTable
+parseTemplate = src -> (
+    if not templateCache#?src
+    then templateCache#src = markMetavars tokenTree cstParse toPlaceholders src;
+    templateCache#src)
+
+-- exact structural equality (boundaries, delimiter, arity, children) -- used for
+-- non-linear patterns instead of re-flattening both subtrees to compare strings
+treeEquals = (a, b) -> (
+    leftOf a === leftOf b and rightOf a === rightOf b and delimiterOf a === delimiterOf b
+    and #contentOf a == #contentOf b
+    and all(#contentOf a, i -> treeEquals((contentOf a)#i, (contentOf b)#i)))
 
 -- accumulate name -> subtree bindings while walking pattern and input in lockstep;
--- a repeated metavariable must bind equal subtrees (a non-linear pattern)
+-- a repeated metavariable must bind structurally-equal subtrees (non-linear pattern)
 matchInto = (pat, inp, b) -> (
     if isMetavar pat then (
         name := metavarName pat;
-        if b#?name then toString b#name == toString inp
+        if b#?name then treeEquals(b#name, inp)
         else (b#name = inp; true)
     )
     else if leftOf pat =!= leftOf inp or rightOf pat =!= rightOf inp
@@ -32,34 +61,49 @@ matchInto = (pat, inp, b) -> (
     else (
         cs := contentOf pat; ds := contentOf inp;
         all(#cs, i -> matchInto(cs#i, ds#i, b))
-    )
-)
+    ))
 
 -- match a pattern tree against an input tree; the bindings, or null on mismatch
 matchPattern = (pat, inp) -> (
     b := new MutableHashTable;
-    if matchInto(pat, inp, b) then new HashTable from b else null
-)
+    if matchInto(pat, inp, b) then new HashTable from b else null)
 
--- rebuild a template tree, splicing the bound subtree for each metavariable
+-- a deep copy of a tree, so a spliced subtree never aliases the input or a sibling
+cloneTree = t -> mkNode(leftOf t, apply(contentOf t, cloneTree), rightOf t, delimiterOf t)
+
+-- rebuild a template tree, splicing a fresh COPY of the bound subtree for each
+-- metavariable -- copying so the result aliases neither the input nor a repeated
+-- hole (editing one occurrence must not mutate the others or the macro input)
 instantiate = (tmpl, b) -> (
     if isMetavar tmpl then (
         name := metavarName tmpl;
         if not b#?name then error("template metavariable $" | name | " is unbound");
-        b#name
+        cloneTree b#name
     )
-    else mkNode(leftOf tmpl, apply(contentOf tmpl, c -> instantiate(c, b)), rightOf tmpl, delimiterOf tmpl)
-)
+    else mkNode(leftOf tmpl, apply(contentOf tmpl, c -> instantiate(c, b)), rightOf tmpl, delimiterOf tmpl))
 
--- a declarative macro: parse the pattern and template once, then on each
--- invocation match the input and expand the template (error if no match)
+-- quote: instantiate a template written as source against a name -> subtree
+-- binding. The output half of declarative macros, exposed so a procedural
+-- `ts -> ...` body can build trees without string surgery.
+quote = method()
+quote(String, HashTable) := TokenTree => (templateSrc, binding) ->
+    instantiate(parseTemplate templateSrc, binding)
+
+-- expand the first (pattern, template) rule whose pattern matches the input
+expandRules = (name, rules, inp) -> (
+    for r in rules do (
+        (pat, tmpl) := r;
+        b := matchPattern(pat, inp);
+        if b =!= null then return instantiate(tmpl, b)
+    );
+    error(name | ": no rule matched the input"))
+
+-- a declarative macro: a list of (pattern, template) source pairs, tried in order;
+-- each pair is parsed once. A rule may be a {p, t} list or a (p, t) sequence.
 declMacro = method()
-declMacro(String, String, String) := Macro => (name, patternSrc, templateSrc) -> (
-    pat := tokenTree cstParse toMarkers patternSrc;
-    tmpl := tokenTree cstParse toMarkers templateSrc;
-    installMacro(name, ts -> (
-        b := matchPattern(pat, focus ts);
-        if b === null then error(name | ": input does not match `" | patternSrc | "`");
-        instantiate(tmpl, b)
-    ))
-)
+declMacro(String, List) := Macro => (name, rules) -> (
+    scan(rules, r -> if not ((instance(r, Sequence) or instance(r, List)) and #r == 2) then
+        error(name | ": each rule must be a (pattern, template) pair, got " | toString r));
+    parsed := apply(rules, r -> (parseTemplate r#0, parseTemplate r#1));
+    installMacro(name, ts -> expandRules(name, parsed, focus ts)))
+declMacro(String, String, String) := Macro => (name, p, t) -> declMacro(name, {(p, t)})

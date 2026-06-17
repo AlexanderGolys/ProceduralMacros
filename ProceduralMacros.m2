@@ -14,7 +14,7 @@ newPackage(
 
 export {
     "installMacro", "expandSource", "runSource",
-    "Macro", "nameOf", "transformOf", "macroNamed", "expandMacro", "declMacro",
+    "Macro", "nameOf", "transformOf", "macroNamed", "expandMacro", "declMacro", "quote",
     "TokenTree", "tokenTree",
     "leaf", "infix", "prefix", "postfix", "delimited", "bracketed",
     "spaceOperator", "whitespaceDelimiter",
@@ -159,12 +159,20 @@ runSource = src -> value expandSource src
 -- The base evaluator is the compiled primitive `value'` fetched from Core, never
 -- this wrapper, so reinstalling it on a package reload cannot recurse.
 macroSigil = ///\$[A-Za-z]///
+-- value' is M2 Core's compiled string-evaluator; it has no public accessor, so we
+-- reach it once through Core's private dictionary -- asserting it is present, to
+-- fail loudly rather than silently if a future M2 renames it. Delegating to the
+-- primitive (never to `value` itself) is what keeps this wrapper from recursing
+-- into itself when the package is reloaded in a live session.
+assert ((Core#"private dictionary")#?"value'")
 valuePrimitive = value (Core#"private dictionary")#"value'"
 value String := s -> valuePrimitive(if match(macroSigil, s) then expandSource s else s)
 
 -- a File evaluates by the very same path: read its contents, then dispatch as
 -- source -- so `value openIn "f.m2"` expands the macros in a file just as
--- `value "..."` expands them in a string.
+-- `value "..."` expands them in a string. NOTE: `load`/`needs` use M2's own
+-- compiled file reader, not `value`, so they do NOT expand macros -- evaluate a
+-- macro file with `value openIn` (a macro-aware loader is future work).
 value File := f -> value get f
 
 -- Declarative (pattern => template) macros build on the macro layer above.
@@ -175,8 +183,9 @@ load "./ProceduralMacros/Patterns.m2"
 --------------------------------------------------------------------
 
 installMacro("show", ts -> (
-    src := toString focus ts;
-    tokenTree cstParse("print(" | format(src | " = ") | " | toString(" | src | "))")
+    e := focus ts;
+    quote("print($label | toString($e))",
+        hashTable{"label" => leaf format(toString e | " = "), "e" => e})
 ))
 
 installMacro("sig", ts -> (
@@ -213,6 +222,30 @@ TEST ///
   assert ( expandSource "$dup f a $" == "( f a , f a )" )           -- one metavar, used twice
   -- a non-matching input is rejected
   assert ( (try expandSource "$commute 2 * 3 $" else "rejected") == "rejected" )
+///
+
+TEST ///
+  -- multiple rules, tried in order; first match wins, no match errors
+  declMacro("flip", {("$a + $b", "$b + $a"), ("$a * $b", "$b * $a")});
+  assert ( expandSource "$flip 1 + 2 $" == "2 + 1" )
+  assert ( expandSource "$flip 3 * 4 $" == "4 * 3" )
+  assert ( (try expandSource "$flip 1 - 2 $" else "no rule") == "no rule" )
+///
+
+TEST ///
+  -- quote: build output from a template + binding (the procedural-authoring win)
+  installMacro("twice2", ts -> quote("2 * ($e)", hashTable{"e" => focus ts}));
+  assert ( expandSource "$twice2 3 + 4 $" == "2 * ( 3 + 4 )" )
+///
+
+TEST ///
+  -- quote splices a COPY: repeated metavars are independent and the bound input
+  -- is never aliased, so editing the result cannot mutate the input or a sibling
+  e = leaf "x";
+  t = quote("($v, $v)", hashTable{"v" => e});
+  seq = (t_0)_0;                       -- the comma sequence inside the brackets
+  assert ( seq_0 =!= seq_1 )           -- the two $v slots are distinct objects
+  assert ( seq_0 =!= e and seq_1 =!= e )   -- and neither aliases the bound input
 ///
 
 TEST ///
