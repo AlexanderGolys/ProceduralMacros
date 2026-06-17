@@ -399,20 +399,29 @@ texMath TokenTree := String => t -> texMath sourceOf t
 --------------------------------------------------------------------
 -- TokenStream -- a cursor into a (mutable) TokenTree
 --------------------------------------------------------------------
--- A cursor is the chain of nodes from the root down to the focused node (held as
--- a List in ts#0). It stores node *references*, not content indices, so a
--- structural edit elsewhere in the shared tree -- inserting or removing a sibling
--- -- cannot silently repoint it: every node keeps its identity. Nodes are mutable,
--- so an edit below the focus is seen through every cursor that shares the tree.
+-- A cursor is the chain of nodes from the root down to the focused node (held under
+-- the Chain key). It stores node *references*, not content indices, so a structural
+-- edit elsewhere in the shared tree -- inserting or removing a sibling -- cannot
+-- silently repoint it: every node keeps its identity. Nodes are mutable, so an edit
+-- below the focus is seen through every cursor that shares the tree. The cursor
+-- itself is immutable: every navigation returns a new one.
+--
+-- It is a HashTable, NOT a BasicList, on purpose: `for c in ts do ...` then dispatches
+-- to the source-order `iterator` below (a list base would instead iterate the chain).
+protect symbol Chain
+TokenStream = new Type of HashTable
 
-TokenStream = new Type of BasicList
+mkStream = chain -> new TokenStream from {Chain => chain}
 
 tokenStream = method()
-tokenStream TokenTree := TokenStream => root -> new TokenStream from {{root}}
+tokenStream TokenTree := TokenStream => root -> mkStream {root}
 
 -- the chain of nodes; rootOf / focus are its two ends
-chainOf = ts -> ts#0
-rootOf = ts -> first chainOf ts
+chainOf = ts -> ts#Chain
+
+-- the whole tree the cursor moves over (its top), regardless of where the focus is
+rootOf = method()
+rootOf TokenStream := TokenTree => ts -> first chainOf ts
 
 focus = method()
 focus TokenStream := TokenTree => ts -> last chainOf ts
@@ -426,18 +435,18 @@ childCount TokenStream := ZZ => ts -> #contentOf focus ts
 -- navigation: each move returns a new cursor over the same (mutable) tree
 child = method()
 child(TokenStream, ZZ) := TokenStream => (ts, i) ->
-    new TokenStream from {append(chainOf ts, (contentOf focus ts)#i)}
+    mkStream append(chainOf ts, (contentOf focus ts)#i)
 
 up = method()
 up TokenStream := TokenStream => ts -> (
     if atTop ts then
         error "up: already at the root";
-    new TokenStream from {drop(chainOf ts, -1)}
+    mkStream drop(chainOf ts, -1)
 )
 
 -- ascend to the root (the cursor at the top of the same tree)
 root = method()
-root TokenStream := TokenStream => ts -> new TokenStream from {{rootOf ts}}
+root TokenStream := TokenStream => ts -> mkStream {rootOf ts}
 
 -- the focused node's index among its parent's children (located by identity, so it
 -- is correct however the siblings have shifted); null at the root, which has none
@@ -458,7 +467,7 @@ TokenStream _ ZZ := TokenStream => (ts, i) -> child(ts, i)
 TokenStream ^ ZZ := TokenStream => (ts, k) -> (
     if k < 0 then error "TokenStream ^ k: cannot ascend a negative number of levels";
     if k >= #chainOf ts then error "TokenStream ^ k: cannot ascend past the root";
-    new TokenStream from {take(chainOf ts, #chainOf ts - k)})
+    mkStream take(chainOf ts, #chainOf ts - k))
 
 net TokenStream := Net => ts -> ("TokenStream @ depth " | toString(#chainOf ts - 1)) || net focus ts
 
@@ -495,7 +504,7 @@ replaceFocus(TokenStream, TokenTree) := TokenStream => (ts, n) -> (
     else (
         p := parentOf ts;
         (p#Items)#(indexInParent ts) = n;
-        new TokenStream from {append(drop(chainOf ts, -1), n)}
+        mkStream append(drop(chainOf ts, -1), n)
     )
 )
 

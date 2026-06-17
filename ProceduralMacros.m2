@@ -23,7 +23,7 @@ export {
     "isLeaf", "tokenClass",
     "leftOf", "rightOf", "delimiterOf", "contentOf",
     "setLeft", "setRight", "setDelimiter", "setItem", "appendItem",
-    "TokenStream", "tokenStream", "focus", "child", "up", "root", "siblingOf",
+    "TokenStream", "tokenStream", "focus", "rootOf", "child", "up", "root", "siblingOf",
     "childIndex", "childCount", "atTop",
     "replaceFocus", "removeFocus", "appendContent", "prependContent", "insertContent",
     "cstParse", "cstToSource"
@@ -217,8 +217,8 @@ installMacro("sig", ts -> (
     )
 ))
 
--- Documentation is intentionally omitted while the API is in flux.
 beginDocumentation()
+load "./ProceduralMacros/Documentation.m2"
 
 --------------------------------------------------------------------
 -- Tests
@@ -308,6 +308,16 @@ TEST ///
   assert ( toString focus ts == "g ( z , a , b , c )" )
   removeFocus (seq_1);              -- detach the element a
   assert ( toString focus ts == "g ( z , b , c )" )
+///
+
+TEST ///
+  -- a cursor iterates its focused subtree in source order via `for c in ts` (the
+  -- cursor is a HashTable, so for-in dispatches to the source-order DFS iterator)
+  ts = tokenStream tokenTree cstParse "f(a, b)";
+  visited = for c in ts list toString focus c;
+  assert ( #visited == 7 )                                  -- root, app, f, bracket, seq, a, b
+  assert ( member("a", visited) and member("b", visited) and member("f", visited) )
+  assert ( first visited == "f" )                           -- f is read out first (it has a left boundary)
 ///
 
 TEST ///
