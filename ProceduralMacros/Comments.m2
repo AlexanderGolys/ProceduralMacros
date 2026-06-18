@@ -12,6 +12,14 @@
 -- which is exactly where documentation comments live. Comments buried mid-
 -- expression are floated to their enclosing cell rather than lost.
 
+-- scanner-state keys: indexed via the `.` operator (st.Pos / st.Pending), which
+-- quotes the symbol itself, so a stray global `Pos = ...` can never shadow the key.
+-- A package still requires every bare key symbol to be declared, so they are
+-- protected here (the same capitalized-key convention Cst.m2 uses for the
+-- TokenTree field keys, matching M2 built-ins like Options / TypicalValue).
+protect symbol Pos
+protect symbol Pending
+
 -- the source-ordered list of literal token texts a tree implies -- the same walk
 -- flatten does, but collecting tokens instead of joining them. A real operator
 -- (a String separator) is itself a source token and is interleaved between
@@ -37,32 +45,32 @@ keywordSynonyms = new HashTable from {"threadLocal" => {"threadVariable"}}
 attachComments = method()
 attachComments(TokenTree, String) := TokenTree => (root, src) -> (
     n := #src;
-    st := new MutableHashTable from {"pos" => 0, "pending" => {}};
+    st := new MutableHashTable from {symbol Pos => 0, symbol Pending => {}};
     at := i -> if i < n then substring(i, 1, src) else "";
     starts := (i, s) -> i + #s <= n and substring(i, #s, src) == s;
     isWSat := i -> (c := at i; c === " " or c === "\t" or c === "\n" or c === "\r");
 
     -- capture one comment (positioned at -- or -*) into the pending list
-    addComment := text -> st#"pending" = append(st#"pending", commentNode text);
+    addComment := text -> st.Pending = append(st.Pending, commentNode text);
     captureComment := () -> (
-        p := st#"pos";
+        p := st.Pos;
         e := if starts(p, "--") then (
             lineEnd := p + 2;
-            while lineEnd < n and at lineEnd =!= "\n" do lineEnd = lineEnd + 1;
+            while lineEnd < n and at lineEnd =!= "\n" do lineEnd += 1;
             lineEnd
         ) else (
             blockEnd := p + 2;
-            while blockEnd < n and not starts(blockEnd, "*-") do blockEnd = blockEnd + 1;
+            while blockEnd < n and not starts(blockEnd, "*-") do blockEnd += 1;
             if blockEnd < n then blockEnd + 2 else n          -- include the closing *-
         );
         addComment substring(p, e - p, src);
-        st#"pos" = e
+        st.Pos = e
     );
 
     -- advance over whitespace and comments; comments land in the pending list
-    skipTrivia := () -> while st#"pos" < n do (
-        p := st#"pos";
-        if isWSat p then st#"pos" = p + 1
+    skipTrivia := () -> while st.Pos < n do (
+        p := st.Pos;
+        if isWSat p then st.Pos = p + 1
         else if starts(p, "--") or starts(p, "-*") then captureComment()
         else break
     );
@@ -77,26 +85,25 @@ attachComments(TokenTree, String) := TokenTree => (root, src) -> (
     );
     endOfRaw := p -> (
         i := p + 3;
-        while i < n and not starts(i, "///") do i = i + 1;
+        while i < n and not starts(i, "///") do i += 1;
         if i < n then i + 3 else n
     );
     synonymEnd := (p, tok) -> (
         if keywordSynonyms#?tok then
-            for alt in keywordSynonyms#tok do if starts(p, alt) then return p + #alt;
-        null
+            for alt in keywordSynonyms#tok do if starts(p, alt) then return p + #alt
     );
 
     -- consume the next expected token from the source, skipping/collecting trivia
     consumeTok := tok -> (
         skipTrivia();
-        p := st#"pos";
+        p := st.Pos;
         if p >= n then error "attachComments: source ended before the token spine did";
-        if at p === "\"" then st#"pos" = endOfString p
-        else if starts(p, "///") then st#"pos" = endOfRaw p
-        else if starts(p, tok) then st#"pos" = p + #tok
+        if at p === "\"" then st.Pos = endOfString p
+        else if starts(p, "///") then st.Pos = endOfRaw p
+        else if starts(p, tok) then st.Pos = p + #tok
         else (
             alt := synonymEnd(p, tok);
-            if alt =!= null then st#"pos" = alt
+            if alt =!= null then st.Pos = alt
             else error("attachComments: desynced at offset " | toString p
                 | "\n  expected token: " | tok
                 | "\n  source here:    " | substring(p, min(24, n - p), src))
@@ -109,17 +116,17 @@ attachComments(TokenTree, String) := TokenTree => (root, src) -> (
     -- source and reject the illegal `;;` (an empty statement) that parse let through.
     consumeSep := () -> (
         skipTrivia();
-        suppressed := starts(st#"pos", ";");
+        suppressed := starts(st.Pos, ";");
         if suppressed then (
-            st#"pos" = st#"pos" + 1;
+            st.Pos += 1;
             skipTrivia();
-            if starts(st#"pos", ";") then
+            if starts(st.Pos, ";") then
                 error "attachComments: ';;' (an empty statement) is not valid M2 -- parse accepts it, but it is a syntax error"
         );
         suppressed
     );
 
-    takePending := () -> (cs := st#"pending"; st#"pending" = {}; cs);
+    takePending := () -> (cs := st.Pending; st.Pending = {}; cs);
 
     cells := contentOf root;
     spines := apply(cells, spineTokens);

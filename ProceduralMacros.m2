@@ -102,17 +102,17 @@ pastString = (src, i) -> (
 )
 pastRawString = (src, i) -> (
     n := #src; j := i + 3;
-    while j + 2 < n and substring(j, 3, src) != "///" do j = j + 1;
+    while j + 2 < n and substring(j, 3, src) != "///" do j += 1;
     if j + 2 < n then j + 3 else n
 )
 pastLineComment = (src, i) -> (
     n := #src; j := i + 2;
-    while j < n and src#j != "\n" do j = j + 1;
+    while j < n and src#j != "\n" do j += 1;
     j
 )
 pastBlockComment = (src, i) -> (
     n := #src; j := i + 2;
-    while j + 1 < n and substring(j, 2, src) != "*-" do j = j + 1;
+    while j + 1 < n and substring(j, 2, src) != "*-" do j += 1;
     if j + 1 < n then j + 2 else n
 )
 
@@ -137,7 +137,7 @@ closesMacro = (src, k) -> src#k == "$" and (k == 0 or isSpaceChar src#(k - 1)) a
 expandInvocation = (src, i) -> (
     n := #src;
     j := i + 1;
-    while j < n and isNameChar src#j do j = j + 1;
+    while j < n and isNameChar src#j do j += 1;
     m := macroNamed substring(i + 1, j - i - 1, src);
     k := j;
     while k < n and not closesMacro(src, k) do k = pastConstruct(src, k);
@@ -155,7 +155,7 @@ expandSource = src -> (
             if opensMacro(src, i) then expandInvocation(src, i)
             else (j := pastConstruct(src, i); (substring(i, j - i, src), j))
         );
-        out = out | piece;
+        out |= piece;
         i = next
     );
     out

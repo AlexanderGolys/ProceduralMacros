@@ -555,5 +555,5 @@ dfsCursors = ts -> (
 iterator TokenStream := ts -> (
     nodes := dfsCursors ts;
     i := 0;
-    Iterator(() -> if i >= #nodes then StopIteration else (c := nodes#i; i = i + 1; c))
+    Iterator(() -> if i >= #nodes then StopIteration else (c := nodes#i; i += 1; c))
 )

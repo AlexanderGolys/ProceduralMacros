@@ -125,12 +125,11 @@ scanReps = src -> (
     at := i -> if i >= 0 and i < n then substring(i, 1, src) else "";   -- "" off either end (negative would wrap)
     stack := {};                                  -- {bracePos, isBraceFormOpen}
     spans := {};                                  -- {sigilPos, closeBracePos, form}
-    i := 0;
-    while i < n do (
+    for i to n - 1 do (
         c := at i;
         if c == "{" then (
             isFormOpen := i >= 1 and at(i-1) == "'" and (i < 2 or not isIdentChar at(i-2));
-            stack = append(stack, (i, isFormOpen)); i = i + 1)
+            stack = append(stack, (i, isFormOpen)))
         else if c == "}" then (
             if #stack == 0 then error "scanReps: unbalanced }";
             top := last stack; stack = drop(stack, -1);
@@ -138,17 +137,15 @@ scanReps = src -> (
             -- (form "|", the brace consumes only `}`); the `|` separators are kept verbatim
             if top#1 then (
                 form := if at(i+1) == "+" or at(i+1) == "*" then at(i+1) else "|";
-                spans = append(spans, (top#0 - 1, i, form)));
-            i = i + 1)
-        else i = i + 1);
+                spans = append(spans, (top#0 - 1, i, form)))));
     if #spans == 0 then return src;
     opens := hashTable apply(spans, s -> (s#0, repCallNames#(s#2) | "("));
     closes := hashTable apply(spans, s -> (s#1, if s#2 === "|" then 1 else 2));
     out := ""; j := 0;
     while j < n do (
-        if opens#?j then (out = out | opens#j; j = j + 2)          -- "'{" -> "RepX(" / "Alt("
-        else if closes#?j then (out = out | ")"; j = j + closes#j) -- "}+"/"}*"/"}" -> ")"
-        else (out = out | at j; j = j + 1));
+        if opens#?j then (out |= opens#j; j += 2)          -- "'{" -> "RepX(" / "Alt("
+        else if closes#?j then (out |= ")"; j += closes#j) -- "}+"/"}*"/"}" -> ")"
+        else (out |= at j; j += 1));
     out)
 
 -- a RepPlus(...) / RepStar(...) application produced by scanReps
