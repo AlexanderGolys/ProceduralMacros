@@ -3,3 +3,6 @@
 *.m2.bak
 /.Macaulay2
 ~/.Macaulay2
+
+# local scratch / prototype
+Macpylay2.m2
