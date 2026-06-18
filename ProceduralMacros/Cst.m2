@@ -155,21 +155,21 @@ isComment TokenTree := Boolean => t -> instance(t, Comment)
 --------------------------------------------------------------------
 
 contentOf = method()
-contentOf TokenTree := List => t -> toList t#Items
+contentOf TokenTree := List => t -> toList t.Items
 
 isLeaf = method()
-isLeaf TokenTree := Boolean => t -> #t#Items == 0
+isLeaf TokenTree := Boolean => t -> #t.Items == 0
 
 leftOf = method()
-leftOf TokenTree := String => t -> t#Opening
+leftOf TokenTree := String => t -> t.Opening
 
 rightOf = method()
-rightOf TokenTree := String => t -> t#Closing
+rightOf TokenTree := String => t -> t.Closing
 
 -- a delimiter is either a real operator (String) or a synthetic symbol, so no
 -- single typical value is declared
 delimiterOf = method()
-delimiterOf TokenTree := t -> t#Separator
+delimiterOf TokenTree := t -> t.Separator
 
 length TokenTree := ZZ => t -> #contentOf t
 TokenTree _ ZZ := TokenTree => (t, i) -> (contentOf t)#i
@@ -180,22 +180,22 @@ TokenTree _ ZZ := TokenTree => (t, i) -> (contentOf t)#i
 --------------------------------------------------------------------
 
 setLeft = method()
-setLeft(TokenTree, String) := String => (t, s) -> t#Opening = s
+setLeft(TokenTree, String) := String => (t, s) -> t.Opening = s
 
 setRight = method()
-setRight(TokenTree, String) := String => (t, s) -> t#Closing = s
+setRight(TokenTree, String) := String => (t, s) -> t.Closing = s
 
 -- the synthetic Symbol delimiters come only from the constructors / parse; a
 -- hand-set delimiter is a real operator, i.e. a String
 setDelimiter = method()
-setDelimiter(TokenTree, String) := String => (t, d) -> t#Separator = d
+setDelimiter(TokenTree, String) := String => (t, d) -> t.Separator = d
 
 setItem = method()
-setItem(TokenTree, ZZ, TokenTree) := TokenTree => (t, i, v) -> (t#Items)#i = v
+setItem(TokenTree, ZZ, TokenTree) := TokenTree => (t, i, v) -> (t.Items)#i = v
 
 appendItem = method()
 appendItem(TokenTree, TokenTree) := TokenTree => (t, v) -> (
-    t#Items = new MutableList from append(contentOf t, v); t)
+    t.Items = new MutableList from append(contentOf t, v); t)
 
 --------------------------------------------------------------------
 -- Construction: raw CST -> TokenTree (tag dispatch via hooks)
@@ -417,7 +417,7 @@ tokenStream = method()
 tokenStream TokenTree := TokenStream => root -> mkStream {root}
 
 -- the chain of nodes; rootOf / focus are its two ends
-chainOf = ts -> ts#Chain
+chainOf = ts -> ts.Chain
 
 -- the whole tree the cursor moves over (its top), regardless of where the focus is
 rootOf = method()
@@ -485,7 +485,7 @@ overwrite = (target, src) -> (
 )
 
 -- store a content list back on a node (Items is always present, empty when none)
-setContent = (node, items) -> (node#Items = new MutableList from items; node)
+setContent = (node, items) -> (node.Items = new MutableList from items; node)
 
 -- the focused node's parent, and the focused node's position within it -- located
 -- by identity, so it is correct no matter how the siblings have since shifted
@@ -503,7 +503,7 @@ replaceFocus(TokenStream, TokenTree) := TokenStream => (ts, n) -> (
     if atTop ts then (overwrite(rootOf ts, n); ts)
     else (
         p := parentOf ts;
-        (p#Items)#(indexInParent ts) = n;
+        (p.Items)#(indexInParent ts) = n;
         mkStream append(drop(chainOf ts, -1), n)
     )
 )
