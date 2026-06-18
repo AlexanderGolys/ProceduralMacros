@@ -151,8 +151,7 @@ scanReps = src -> (
 -- a RepPlus(...) / RepStar(...) application produced by scanReps
 quantifierOf = t -> (
     if delimiterOf t === spaceOperator and #contentOf t == 2 and isLeaf (contentOf t)#0
-    then (n := leftOf (contentOf t)#0; if n === "RepPlus" then "+" else if n === "RepStar" then "*")
-    else null)
+    then (n := leftOf (contentOf t)#0; if n === "RepPlus" then "+" else if n === "RepStar" then "*"))
 
 -- the unit of a repetition call: the bracket's inner elements, with the trailing
 -- "null" element left by the conventional trailing separator (`'x,`) dropped
@@ -171,8 +170,7 @@ altInnerOf = t -> (
     if delimiterOf t === spaceOperator and #contentOf t == 2 and isLeaf (contentOf t)#0
        and leftOf (contentOf t)#0 === altCallName
     then (inner := contentOf (contentOf t)#1;
-        if #inner == 0 then error "empty '{ | } alternation"; inner#0)
-    else null)
+        if #inner == 0 then error "empty '{ | } alternation"; inner#0))
 
 -- flatten the left-associative `|` infix spine into the list of alternation branches
 -- ('{ a | b | c } parses as ((a|b)|c)), so a, b, c are recovered as three branches)
@@ -186,8 +184,7 @@ altBranchesOf = t -> (
 typedKindOf = t -> (
     if delimiterOf t === spaceOperator and #contentOf t == 2 and isLeaf (contentOf t)#0
        and match("^" | metavarKindPrefix, leftOf (contentOf t)#0)
-    then substring(#metavarKindPrefix, leftOf (contentOf t)#0)
-    else null)
+    then substring(#metavarKindPrefix, leftOf (contentOf t)#0))
 
 -- convert pre-scanned placeholders into nodes: metavar leaves -> Metavar, typed-hole
 -- calls -> Metavar with a kind, and RepPlus/RepStar calls -> Repetition (unit recursed)
@@ -213,10 +210,7 @@ markNodes = t -> (
 -- call. A CacheTable (not a plain MutableHashTable) is the M2 idiom for memoised
 -- computed values: it names the role, its contents stay invisible to === comparison.
 templateCache = new CacheTable
-parseTemplate = src -> (
-    if not templateCache#?src
-    then templateCache#src = markNodes tokenTree cstParse toPlaceholders scanReps src;
-    templateCache#src)
+parseTemplate = src -> templateCache#src ??= markNodes tokenTree cstParse toPlaceholders scanReps src
 
 -- the metavariable names appearing anywhere in a subtree (a repetition unit's holes)
 metavarNamesIn = t -> (
@@ -247,9 +241,9 @@ matchRepetition = (rep, ielems, b) -> (
     ok := all(nChunks, ci -> (
         tb := new MutableHashTable;
         chunkOK := all(u, j -> matchInto(unit#j, ielems#(ci * u + j), tb));
-        if chunkOK then scan(keys tb, nm -> b#nm = append(if b#?nm then b#nm else {}, tb#nm));
+        if chunkOK then scan(keys tb, nm -> b#nm = append(b#nm ?? {}, tb#nm));
         chunkOK));
-    if ok and nChunks == 0 then scan(metavarNamesIn rep, nm -> if not b#?nm then b#nm = {});
+    if ok and nChunks == 0 then scan(metavarNamesIn rep, nm -> b#nm ??= {});
     ok)
 
 -- match a list of pattern elements (at most one of them a repetition) against a list
@@ -315,7 +309,7 @@ matchInto = (pat, inp, b) -> (
 -- match a pattern tree against an input tree; the bindings, or null on mismatch
 matchPattern = (pat, inp) -> (
     b := new MutableHashTable;
-    if matchInto(pat, inp, b) then new HashTable from b else null)
+    if matchInto(pat, inp, b) then new HashTable from b)
 
 -- a deep copy of a tree, so a spliced subtree never aliases the input or a sibling.
 -- `class t` keeps the node's exact (sub)type -- a cloned Comment / Metavar stays one
